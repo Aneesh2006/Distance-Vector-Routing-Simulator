@@ -39,17 +39,9 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-<<<<<<< HEAD
-<<<<<<< HEAD
   },
   "description": "This React application visualizes the Distance Vector Routing (DVR) algorithm. It allows you to create a network of routers, add links between them, and run the DVR algorithm step by step to see how routing tables evolve.",
   "main": "index.js",
   "author": "",
   "license": "ISC"
-=======
-  }
->>>>>>> 3b893c17c33a51216d7c493ca0a1db646b0696fe
-=======
-  }
->>>>>>> 3b893c17c33a51216d7c493ca0a1db646b0696fe
 }
