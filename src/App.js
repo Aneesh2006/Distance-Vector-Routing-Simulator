@@ -152,26 +152,26 @@ function App() {
     setNextRouterId(prev => prev + 1);
 
     // Reinitialize network with new topology
-    const topology = {};
+      const topology = {};
     Object.keys(newRouters).forEach(routerId => {
-      topology[routerId] = [];
-    });
+        topology[routerId] = [];
+      });
 
-    links.forEach(link => {
-      if (!topology[link.source]) topology[link.source] = [];
-      if (!topology[link.destination]) topology[link.destination] = [];
-
-      topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-      topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-    });
+      links.forEach(link => {
+        if (!topology[link.source]) topology[link.source] = [];
+        if (!topology[link.destination]) topology[link.destination] = [];
+        
+        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
+        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
+      });
 
     // Always create a new network when router is added
-    const newNetwork = new Network(topology);
-    setNetwork(newNetwork);
-    setConvergenceStatus('Router added. Press "Run Next Iteration" to see DVR updates...');
-
-    // If a router is selected, update its routing table in the UI
-    if (selectedRouter) {
+      const newNetwork = new Network(topology);
+      setNetwork(newNetwork);
+      setConvergenceStatus('Router added. Press "Run Next Iteration" to see DVR updates...');
+      
+      // If a router is selected, update its routing table in the UI
+      if (selectedRouter) {
       setTimeout(() => updateRoutingTable(selectedRouter), 0);
     }
 
@@ -208,7 +208,7 @@ function App() {
       newLinks.forEach(link => {
         if (!topology[link.source]) topology[link.source] = [];
         if (!topology[link.destination]) topology[link.destination] = [];
-
+        
         topology[link.source].push({ neighbor: link.destination, cost: link.cost });
         topology[link.destination].push({ neighbor: link.source, cost: link.cost });
       });
@@ -216,7 +216,7 @@ function App() {
       const newNetwork = new Network(topology);
       setNetwork(newNetwork);
       setConvergenceStatus('Router deleted. Press "Run Next Iteration" to see DVR updates...');
-
+      
       // If a router is selected and it's not the deleted one, update its routing table in the UI
       if (selectedRouter && selectedRouter !== id) {
         updateRoutingTable(selectedRouter);
@@ -248,29 +248,29 @@ function App() {
       setLinks(newLinks);
 
       // Update network topology
-      const topology = {};
-      Object.keys(routers).forEach(routerId => {
-        topology[routerId] = [];
-      });
+        const topology = {};
+        Object.keys(routers).forEach(routerId => {
+          topology[routerId] = [];
+        });
 
       newLinks.forEach(link => {
-        if (!topology[link.source]) topology[link.source] = [];
-        if (!topology[link.destination]) topology[link.destination] = [];
-
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
+          if (!topology[link.source]) topology[link.source] = [];
+          if (!topology[link.destination]) topology[link.destination] = [];
+          
+          topology[link.source].push({ neighbor: link.destination, cost: link.cost });
+          topology[link.destination].push({ neighbor: link.source, cost: link.cost });
+        });
 
       // Always create a new network when link is added
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-      setConvergenceStatus('Link added. Press "Run Next Iteration" to see DVR updates...');
-
-      // If a router is selected, update its routing table in the UI
-      if (selectedRouter) {
+        const newNetwork = new Network(topology);
+        setNetwork(newNetwork);
+        setConvergenceStatus('Link added. Press "Run Next Iteration" to see DVR updates...');
+        
+        // If a router is selected, update its routing table in the UI
+        if (selectedRouter) {
         setTimeout(() => updateRoutingTable(selectedRouter), 0);
+        }
       }
-    }
 
     // Clear highlighted path when topology changes
     resetHighlightedPath();
@@ -336,7 +336,7 @@ function App() {
       newLinks.forEach(link => {
         if (!topology[link.source]) topology[link.source] = [];
         if (!topology[link.destination]) topology[link.destination] = [];
-
+        
         topology[link.source].push({ neighbor: link.destination, cost: link.cost });
         topology[link.destination].push({ neighbor: link.source, cost: link.cost });
       });
@@ -344,7 +344,7 @@ function App() {
       const newNetwork = new Network(topology);
       setNetwork(newNetwork);
       setConvergenceStatus('Router failed. Press "Run Next Iteration" to see DVR updates...');
-
+      
       // If a router is selected and it's not the failed one, update its routing table
       if (selectedRouter && selectedRouter !== id) {
         updateRoutingTable(selectedRouter);
@@ -386,8 +386,8 @@ function App() {
       });
 
       // Create the network
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
+        const newNetwork = new Network(topology);
+        setNetwork(newNetwork);
       // Set iteration to match network's internal iteration (0)
       setIteration(0);
       console.log("Network initialized with topology:", topology);
@@ -405,7 +405,7 @@ function App() {
     links.forEach(link => {
       const sourceRouter = network?.routers[link.source];
       const destRouter = network?.routers[link.destination];
-
+      
       if (sourceRouter?.isActive && destRouter?.isActive) {
         updateAnimations.push({
           type: 'update',
@@ -555,39 +555,13 @@ function App() {
 
     setLinks(newLinks);
 
-    // Update network topology following DVR protocol
+    // Update network topology without animations
     if (network) {
-      // First, notify the routers about the link failure
+      // Get router references
       const sourceRouter = network.routers[source];
       const destRouter = network.routers[destination];
 
       if (sourceRouter && destRouter) {
-        // Create update message animations for the initial failure notification
-        const updateAnimations = [
-          {
-            type: 'failure',
-            source: source,
-            target: destination,
-            progress: 0,
-            startTime: Date.now(),
-            duration: animationSpeed * 1000,
-            iteration: iteration + 1
-          },
-          {
-            type: 'failure',
-            source: destination,
-            target: source,
-            progress: 0,
-            startTime: Date.now(),
-            duration: animationSpeed * 1000,
-            iteration: iteration + 1
-          }
-        ];
-
-        setAnimations(prev => [...prev, ...updateAnimations]);
-
-        // After animation completes, handle the DVR updates
-        setTimeout(() => {
           // Remove the link from both routers' routing tables
           sourceRouter.handleLinkFailure(destination);
           destRouter.handleLinkFailure(source);
@@ -601,7 +575,7 @@ function App() {
           newLinks.forEach(link => {
             if (!topology[link.source]) topology[link.source] = [];
             if (!topology[link.destination]) topology[link.destination] = [];
-
+            
             topology[link.source].push({ neighbor: link.destination, cost: link.cost });
             topology[link.destination].push({ neighbor: link.source, cost: link.cost });
           });
@@ -610,21 +584,17 @@ function App() {
           // Copy over routing tables from the old network
           Object.keys(network.routers).forEach(routerId => {
             if (newNetwork.routers[routerId]) {
-              newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
+            newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
             }
           });
-
+          
           setNetwork(newNetwork);
-          setConvergenceStatus('Link failed. Press "Run Next Iteration" to see DVR updates...');
-
+        setConvergenceStatus('Link removed. Press "Run Next Iteration" to see DVR updates...');
+          
           // Update the UI with the initial state
           if (selectedRouter) {
             updateRoutingTable(selectedRouter);
           }
-
-          // Increment iteration counter for the initial failure
-          setIteration(prev => prev + 1);
-        }, animationSpeed * 1000);
       }
     }
 
@@ -644,37 +614,11 @@ function App() {
       );
       setLinks(newLinks);
 
-      // Use our new approach to handle link failures
+      // Update network topology without animations
       const sourceRouter = network.routers[source];
       const destRouter = network.routers[destination];
 
       if (sourceRouter && destRouter) {
-        // Create update message animations for the initial failure notification
-        const updateAnimations = [
-          {
-            type: 'failure',
-            source: source,
-            target: destination,
-            progress: 0,
-            startTime: Date.now(),
-            duration: animationSpeed * 1000,
-            iteration: iteration + 1
-          },
-          {
-            type: 'failure',
-            source: destination,
-            target: source,
-            progress: 0,
-            startTime: Date.now(),
-            duration: animationSpeed * 1000,
-            iteration: iteration + 1
-          }
-        ];
-
-        setAnimations(prev => [...prev, ...updateAnimations]);
-
-        // After animation completes, handle the DVR updates
-        setTimeout(() => {
           // Remove the link from both routers' routing tables
           sourceRouter.handleLinkFailure(destination);
           destRouter.handleLinkFailure(source);
@@ -688,7 +632,7 @@ function App() {
           newLinks.forEach(link => {
             if (!topology[link.source]) topology[link.source] = [];
             if (!topology[link.destination]) topology[link.destination] = [];
-
+            
             topology[link.source].push({ neighbor: link.destination, cost: link.cost });
             topology[link.destination].push({ neighbor: link.source, cost: link.cost });
           });
@@ -697,21 +641,17 @@ function App() {
           // Copy over routing tables from the old network
           Object.keys(network.routers).forEach(routerId => {
             if (newNetwork.routers[routerId]) {
-              newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
+            newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
             }
           });
-
+          
           setNetwork(newNetwork);
-          setConvergenceStatus('Link failed. Press "Run Next Iteration" to see DVR updates...');
-
+        setConvergenceStatus('Link removed. Press "Run Next Iteration" to see DVR updates...');
+          
           // Update the UI with the initial state
           if (selectedRouter) {
             updateRoutingTable(selectedRouter);
           }
-
-          // Increment iteration counter for the initial failure
-          setIteration(prev => prev + 1);
-        }, animationSpeed * 1000);
       }
     }
   };
@@ -911,86 +851,86 @@ function App() {
         <div className="left-panel">
           <div className="control-section">
             <h2>Router Controls</h2>
-            <div className="form-group">
-              <label>X: </label>
-              <input
-                type="number"
-                value={routerX}
-                onChange={(e) => setRouterX(parseInt(e.target.value))}
-              />
-            </div>
-            <div className="form-group">
-              <label>Y: </label>
-              <input
-                type="number"
-                value={routerY}
-                onChange={(e) => setRouterY(parseInt(e.target.value))}
-              />
-            </div>
-            <div className="form-group">
-              <label>Z: </label>
-              <input
-                type="number"
-                value={routerZ}
-                onChange={(e) => setRouterZ(parseInt(e.target.value))}
-              />
-            </div>
-            <button onClick={addRouter}>Add Router</button>
+          <div className="form-group">
+            <label>X: </label>
+            <input
+              type="number"
+              value={routerX}
+              onChange={(e) => setRouterX(parseInt(e.target.value))}
+            />
           </div>
+          <div className="form-group">
+            <label>Y: </label>
+            <input
+              type="number"
+              value={routerY}
+              onChange={(e) => setRouterY(parseInt(e.target.value))}
+            />
+          </div>
+          <div className="form-group">
+            <label>Z: </label>
+            <input
+              type="number"
+              value={routerZ}
+              onChange={(e) => setRouterZ(parseInt(e.target.value))}
+            />
+          </div>
+          <button onClick={addRouter}>Add Router</button>
+        </div>
 
           <div className="control-section">
-            <h2>Delete Router</h2>
-            <select onChange={(e) => deleteRouter(e.target.value)}>
-              <option value="">Select Router to Delete</option>
+          <h2>Delete Router</h2>
+          <select onChange={(e) => deleteRouter(e.target.value)}>
+            <option value="">Select Router to Delete</option>
+            {Object.keys(routers).map(id => (
+              <option key={id} value={id}>{id}</option>
+            ))}
+          </select>
+        </div>
+
+          <div className="control-section">
+            <h2>Link Controls</h2>
+          <div className="form-group">
+            <label>Source: </label>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">Select Source</option>
               {Object.keys(routers).map(id => (
                 <option key={id} value={id}>{id}</option>
               ))}
             </select>
           </div>
-
-          <div className="control-section">
-            <h2>Link Controls</h2>
-            <div className="form-group">
-              <label>Source: </label>
-              <select value={source} onChange={(e) => setSource(e.target.value)}>
-                <option value="">Select Source</option>
-                {Object.keys(routers).map(id => (
-                  <option key={id} value={id}>{id}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Destination: </label>
-              <select value={destination} onChange={(e) => setDestination(e.target.value)}>
-                <option value="">Select Destination</option>
-                {Object.keys(routers).map(id => (
-                  <option key={id} value={id}>{id}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Cost: </label>
-              <input
-                type="number"
-                value={cost}
-                onChange={(e) => setCost(parseInt(e.target.value))}
-                min="1"
-              />
-            </div>
-            <button onClick={addLink}>Add Link</button>
-          </div>
-
-          <div className="control-section">
-            <h2>Delete Link</h2>
-            <select value={selectedLink} onChange={(e) => setSelectedLink(e.target.value)}>
-              <option value="">Select Link to Delete</option>
-              {links.map((link, index) => (
-                <option key={index} value={`${link.source}-${link.destination}`}>
-                  {link.source} ↔ {link.destination} (Cost: {link.cost})
-                </option>
+          <div className="form-group">
+            <label>Destination: </label>
+            <select value={destination} onChange={(e) => setDestination(e.target.value)}>
+              <option value="">Select Destination</option>
+              {Object.keys(routers).map(id => (
+                <option key={id} value={id}>{id}</option>
               ))}
             </select>
-            <button onClick={deleteLink} disabled={!selectedLink}>Delete Link</button>
+          </div>
+          <div className="form-group">
+            <label>Cost: </label>
+            <input
+              type="number"
+              value={cost}
+              onChange={(e) => setCost(parseInt(e.target.value))}
+              min="1"
+            />
+          </div>
+          <button onClick={addLink}>Add Link</button>
+        </div>
+
+          <div className="control-section">
+          <h2>Delete Link</h2>
+          <select value={selectedLink} onChange={(e) => setSelectedLink(e.target.value)}>
+            <option value="">Select Link to Delete</option>
+            {links.map((link, index) => (
+              <option key={index} value={`${link.source}-${link.destination}`}>
+                {link.source} ↔ {link.destination} (Cost: {link.cost})
+              </option>
+            ))}
+          </select>
+          <button onClick={deleteLink} disabled={!selectedLink}>Delete Link</button>
           </div>
         </div>
 
@@ -1046,27 +986,27 @@ function App() {
         <div className="right-panel">
           <div className="control-section">
             <h2>Algorithm Controls</h2>
-            <button onClick={runIteration} disabled={running}>
-              {running ? "Running..." : "Run Next Iteration"}
-            </button>
-            <button onClick={resetIterations}>
-              Reset Iterations
-            </button>
-          </div>
+          <button onClick={runIteration} disabled={running}>
+            {running ? "Running..." : "Run Next Iteration"}
+          </button>
+          <button onClick={resetIterations}>
+            Reset Iterations
+          </button>
+        </div>
 
           <div className="control-section">
             <h2>Animation Control</h2>
-            <div className="form-group">
-              <label>Animation Speed: </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={animationSpeed}
-                onChange={(e) => setAnimationSpeed(parseInt(e.target.value))}
-              />
-              <span>{animationSpeed}s</span>
-            </div>
+          <div className="form-group">
+            <label>Animation Speed: </label>
+            <input
+              type="range"
+              min="1"
+              max="10"
+              value={animationSpeed}
+              onChange={(e) => setAnimationSpeed(parseInt(e.target.value))}
+            />
+            <span>{animationSpeed}s</span>
+          </div>
           </div>
 
           <div className="control-section">
@@ -1083,7 +1023,7 @@ function App() {
                 <option key={id} value={id}>Router {id}</option>
               ))}
             </select>
-            <button
+            <button 
               onClick={findPath}
               disabled={!pathSource || !pathDestination}
             >
@@ -1115,11 +1055,11 @@ function App() {
               <div className="routing-table">
                 {Object.keys(routingTable).length > 0 ? (
                   Object.entries(routingTable).map(([dest, info]) => (
-                    <div key={dest} className="routing-entry">
-                      <span>Destination: {dest}</span>
+                  <div key={dest} className="routing-entry">
+                    <span>Destination: {dest}</span>
                       <span>Next Hop: {info.nextHop || '-'}</span>
                       <span>Cost: {info.cost === Infinity ? "∞" : info.cost}</span>
-                    </div>
+                  </div>
                   ))
                 ) : (
                   <p>No routing table entries available.</p>

@@ -84,8 +84,13 @@ class Router {
     }
 
     handleLinkFailure(neighborId) {
-        // Remove the failed link from routing table
-        delete this.routingTable[neighborId];
+        // Don't remove the entry, just set its cost to infinity
+        if (this.routingTable[neighborId]) {
+            this.routingTable[neighborId] = {
+                nextHop: neighborId,
+                cost: Infinity
+            };
+        }
 
         // Update all routes that used this neighbor as next hop
         Object.keys(this.routingTable).forEach(destination => {
