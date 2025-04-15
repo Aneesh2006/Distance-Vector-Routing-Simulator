@@ -44,6 +44,6 @@ The primary components are:
 ## Technology Stack
 
 - React
-- JavaScript
+- Three JS
 - SVG for visualization
 - CSS for styling
