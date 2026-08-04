@@ -1,1081 +1,1477 @@
-import React, { useState, useEffect, useRef } from 'react';
+/**
+ * App.js — controls and state for the routing protocol simulator.
+ *
+ * The `Simulation` instance in `networkRef` is the single source of truth for
+ * the topology and whatever the active protocol has learned. React state only
+ * ever holds:
+ *   - `positions`: where each router sits in 3D (a view concern, not a protocol one),
+ *   - `snapshot`:  an immutable copy of the engine, refreshed after every change,
+ *   - transient UI state (form fields, selection, packets in flight).
+ *
+ * Every mutation goes through `commit()`, so the engine and the UI can never
+ * drift apart — which is what the old "rebuild the whole Network on every edit"
+ * approach could not guarantee.
+ *
+ * Since the protocol refactor nothing in here names a protocol. Options, table
+ * columns, packet labels, decorations, legend entries, help text and per-router
+ * knobs all arrive in the snapshot, so a new protocol is a new plugin and no
+ * change at all to this file.
+ */
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
-import { Router, Network } from './DvrAlgorithm';
-import Network3D from './Network3D';
 import { Canvas } from '@react-three/fiber';
+import Network3D from './Network3D';
+import HelpModal from './HelpModal';
+import ComparisonModal from './ComparisonModal';
+import Modal from './Modal';
+import { PROTOCOLS, Simulation, compareIds } from './DvrAlgorithm';
+import { decodeScenario, scenarioFromUrl, scenarioUrl } from './engine/scenario';
+import { SCENE, SIM, maxLinkCostFor } from './config';
+import { DEFAULT_PRESET, PRESETS, PRESET_GROUPS, autoPosition } from './presets';
+import {
+  ClockReadout,
+  CorrectnessMeter,
+  EventLog,
+  RouterScore,
+  Sparkline,
+  StatsPanel,
+} from './Scoreboard';
+import {
+  InspectorBlocks,
+  ProtocolOptions,
+  RouterControls,
+  RoutingTable,
+  SceneLegend,
+  routerDecoration,
+  toNumber,
+} from './ProtocolPanel';
 
-function HelpModal({ isOpen, onClose }) {
-  if (!isOpen) return null;
+/* ------------------------------------------------------------------ *
+ * Helpers
+ * ------------------------------------------------------------------ */
 
+/** Lowest positive integer not already used as a router id. */
+function nextFreeId(existingIds) {
+  const used = new Set(existingIds);
+  let candidate = 1;
+  while (used.has(String(candidate))) candidate += 1;
+  return String(candidate);
+}
+
+function buildWorld(preset, protocolId, optionOverrides, run) {
+  const network = new Simulation(undefined, protocolId, optionOverrides, run);
+  const positions = {};
+  preset.routers.forEach((router) => {
+    network.addRouter(router.id, { refresh: false });
+    positions[router.id] = { x: router.x, y: router.y, z: router.z };
+  });
+  preset.links.forEach((link) => {
+    network.addLink(link.source, link.destination, link.cost, { refresh: false });
+  });
+  network.refresh();
+  return { network, positions };
+}
+
+/**
+ * Rebuild a world from a shared link.
+ *
+ * Deliberately the same shape as `buildWorld` — routers, then links, then one
+ * refresh — because a scenario is a topology plus settings and nothing else. The
+ * per-router knobs are applied last, after the wiring exists, since a LOCAL_PREF
+ * towards a neighbour that has not been added yet is meaningless.
+ */
+function buildFromScenario(scenario) {
+  const network = new Simulation(undefined, scenario.protocolId, scenario.options, {
+    mode: scenario.mode,
+    seed: scenario.seed,
+  });
+  const positions = {};
+
+  scenario.routers.forEach((router, index) => {
+    network.addRouter(router.id, { refresh: false });
+    positions[router.id] =
+      router.x === undefined ? autoPosition(index) : { x: router.x, y: router.y, z: router.z };
+  });
+  scenario.links.forEach((link) => {
+    network.addLink(link.source, link.destination, link.cost, { refresh: false });
+  });
+  Object.entries(scenario.routerOptions).forEach(([routerId, knobs]) => {
+    Object.entries(knobs).forEach(([key, value]) => {
+      if (value !== null && typeof value === 'object') {
+        Object.entries(value).forEach(([neighborId, inner]) => {
+          network.setRouterOption(routerId, key, inner, neighborId);
+        });
+        return;
+      }
+      network.setRouterOption(routerId, key, value);
+    });
+  });
+  // Switched off last: `setRouterActive` is a topology event every plugin reacts
+  // to, and it should react to the finished network rather than a partial one.
+  scenario.routers.forEach((router) => {
+    if (!router.isActive) network.setRouterActive(router.id, false, { refresh: false });
+  });
+
+  network.refresh();
+  return { network, positions };
+}
+
+const linkKey = (source, destination) => [source, destination].sort(compareIds).join('|');
+
+/** Status-line tones. At module scope because the opening world sets one too. */
+const info = (text) => ({ tone: 'info', text });
+const warn = (text) => ({ tone: 'warning', text });
+const good = (text) => ({ tone: 'success', text });
+
+/**
+ * A panel section that can be folded away.
+ *
+ * `<details>` rather than a state flag: the browser already knows how to do
+ * this, it is keyboard-operable and correctly announced for free, and the
+ * open/closed state does not need to survive in React state.
+ *
+ * Every section in both panels is one of these (design decision #7), because by
+ * stage 9 the right-hand panel has eight of them and the left five, and a user
+ * who is watching one thing should be able to put the other seven away. What
+ * `defaultOpen` decides is only what is unfolded on a fresh load: the controls
+ * needed to make anything happen at all, and nothing else.
+ */
+function CollapsibleSection({ title, defaultOpen = false, children }) {
   return (
-    <div style={{
-      position: 'fixed',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-      backgroundColor: 'white',
-      padding: '20px',
-      borderRadius: '8px',
-      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-      zIndex: 1000,
-      maxWidth: '600px',
-      maxHeight: '80vh',
-      overflow: 'auto',
-      textAlign: 'left'
-    }}>
-      <h2 style={{ color: '#1976D2', marginBottom: '15px' }}>Welcome to Distance Vector Routing Simulator!</h2>
-
-      <div style={{ marginBottom: '15px' }}>
-        <h3>How to Use:</h3>
-        <ul style={{ listStyleType: 'disc', paddingLeft: '20px' }}>
-          <li>Click and drag in the 3D space to rotate the view</li>
-          <li>Use scroll wheel to zoom in/out</li>
-          <li>Click on routers to view their routing tables</li>
-          <li>Use the control panel to:
-            <ul style={{ paddingLeft: '20px', marginTop: '5px' }}>
-              <li>Add/Remove routers</li>
-              <li>Create/Delete links between routers</li>
-              <li>Run the DVR algorithm iterations</li>
-              <li>Simulate link failures</li>
-            </ul>
-          </li>
-        </ul>
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <h3>Visual Guide:</h3>
-        <ul style={{ listStyleType: 'disc', paddingLeft: '20px' }}>
-          <li>Blue cubes represent routers</li>
-          <li>Green lines represent links between routers</li>
-          <li>Red lines indicate the shortest path between routers</li>
-          <li>Blue animations show routing updates being propagated</li>
-          <li>Numbers on links represent link costs</li>
-        </ul>
-      </div>
-
-      <button
-        onClick={onClose}
-        style={{
-          backgroundColor: '#1976D2',
-          color: 'white',
-          padding: '8px 16px',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          float: 'right'
-        }}
-      >
-        Got it!
-      </button>
-    </div>
+    <details className="control-section control-section--collapsible" open={defaultOpen}>
+      <summary>
+        <h2>{title}</h2>
+      </summary>
+      {children}
+    </details>
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * App
+ * ------------------------------------------------------------------ */
+
+/**
+ * The world to open with: whatever a shared link describes, or the default
+ * preset.
+ *
+ * Read once, synchronously, before the first render — a scenario that arrived in
+ * the URL is not a change of state, it *is* the initial state, and loading it
+ * afterwards would show the user a network they did not ask for first.
+ */
+function openingWorld() {
+  const fallback = (status) => ({
+    ...buildWorld(DEFAULT_PRESET, PROTOCOLS[0].id),
+    name: DEFAULT_PRESET.name,
+    optionsByProtocol: {},
+    status,
+  });
+
+  const text = scenarioFromUrl(typeof window === 'undefined' ? '' : window.location.href);
+  if (!text) {
+    return fallback(info(`Loaded "${DEFAULT_PRESET.name}". Run a round to start the exchange.`));
+  }
+
+  const scenario = decodeScenario(text);
+  if (!scenario.ok) {
+    return fallback(
+      warn(`${scenario.warnings.join(' ')} Loaded "${DEFAULT_PRESET.name}" instead.`)
+    );
+  }
+
+  return {
+    ...buildFromScenario(scenario),
+    name: 'Shared scenario',
+    // Remembered per protocol like any other settings, so switching away and
+    // back does not quietly discard what the link asked for.
+    optionsByProtocol: { [scenario.protocolId]: scenario.options },
+    status:
+      scenario.warnings.length > 0
+        ? warn(`Loaded a shared scenario. ${scenario.warnings.join(' ')}`)
+        : good('Loaded a shared scenario from the link.'),
+  };
+}
+
 function App() {
-  const [routers, setRouters] = useState({});
-  const [links, setLinks] = useState([]);
-  const [nextRouterId, setNextRouterId] = useState(1);
-  const [routerX, setRouterX] = useState(0);
-  const [routerY, setRouterY] = useState(0);
-  const [routerZ, setRouterZ] = useState(0);
-  const [source, setSource] = useState('');
-  const [destination, setDestination] = useState('');
-  const [cost, setCost] = useState(1);
-  const [network, setNetwork] = useState(null);
-  const [iteration, setIteration] = useState(0);
-  const [running, setRunning] = useState(false);
-  const [selectedRouter, setSelectedRouter] = useState(null);
-  const [routingTable, setRoutingTable] = useState({});
-  const [animationSpeed, setAnimationSpeed] = useState(5);
-  const [animations, setAnimations] = useState([]);
-  const [selectedLink, setSelectedLink] = useState('');
-  const [convergenceStatus, setConvergenceStatus] = useState('');
-  const [pathResult, setPathResult] = useState(null);
+  const worldRef = useRef(null);
+  if (worldRef.current === null) {
+    worldRef.current = openingWorld();
+  }
+
+  const networkRef = useRef(worldRef.current.network);
+  const packetTimerRef = useRef(null);
+  const packetSequenceRef = useRef(0);
+  /**
+   * Option values per protocol id, so switching away and back — or loading a
+   * new preset — does not silently reset the settings the user chose. The
+   * schemas differ per protocol, so one shared object would not do.
+   */
+  const optionsByProtocolRef = useRef(worldRef.current.optionsByProtocol);
+
+  const [positions, setPositions] = useState(() => worldRef.current.positions);
+  const [snapshot, setSnapshot] = useState(() => worldRef.current.network.getSnapshot());
+
+  const [status, setStatus] = useState(() => worldRef.current.status);
+
+  // Router form
+  const [routerX, setRouterX] = useState('0');
+  const [routerY, setRouterY] = useState('0');
+  const [routerZ, setRouterZ] = useState('0');
+  const [autoPlace, setAutoPlace] = useState(true);
+
+  // Link form
+  const [linkSource, setLinkSource] = useState('');
+  const [linkDestination, setLinkDestination] = useState('');
+  const [linkCost, setLinkCost] = useState(String(SIM.defaultLinkCost));
+
+  // Path finder
   const [pathSource, setPathSource] = useState('');
   const [pathDestination, setPathDestination] = useState('');
-  const [showConvergenceModal, setShowConvergenceModal] = useState(false);
+  const [pathResult, setPathResult] = useState(null);
   const [highlightedPath, setHighlightedPath] = useState([]);
-  const [showHelpModal, setShowHelpModal] = useState(true);
-  const [convergenceDetected, setConvergenceDetected] = useState(false);
+  const [showRouteTree, setShowRouteTree] = useState(false);
+
+  const [selectedRouter, setSelectedRouter] = useState(null);
+  const [inspectorTab, setInspectorTab] = useState('table');
+  const [animationSeconds, setAnimationSeconds] = useState(SIM.animation.defaultSeconds);
+  const [packets, setPackets] = useState([]);
+
+  // Timer mode. `playing` drives the only loop in the app that runs by itself;
+  // `speed` is simulated seconds per real second, so the protocol's constants
+  // stay the RFC's and only the watching is sped up.
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(SIM.timers.defaultSpeed);
+  const [seedText, setSeedText] = useState(String(SIM.timers.defaultSeed));
+
+  const [fitSignal, setFitSignal] = useState(0);
   const [showHelp, setShowHelp] = useState(true);
-  const [previousTables, setPreviousTables] = useState({});
-
-  // Animation frame update
-  useEffect(() => {
-    if (animations.length > 0) {
-      const animationFrame = requestAnimationFrame(() => {
-        const currentTime = Date.now();
-
-        // Update animation progress
-        const updatedAnimations = animations.map(anim => {
-          const elapsed = currentTime - anim.startTime;
-          const progress = Math.min(1, elapsed / anim.duration);
-          return { ...anim, progress };
-        });
-
-        // Remove finished animations
-        const activeAnimations = updatedAnimations.filter(anim => anim.progress < 1);
-
-        setAnimations(activeAnimations);
-      });
-
-      return () => cancelAnimationFrame(animationFrame);
-    }
-  }, [animations]);
-
-  // Effect to show alert when convergence is detected
-  useEffect(() => {
-    if (convergenceDetected) {
-      // Small delay to ensure state updates complete first
-      const timer = setTimeout(() => {
-        // Remove the alert
-        setConvergenceDetected(false);
-        setShowConvergenceModal(true);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [convergenceDetected]);
-
-  useEffect(() => {
-    // Remove the localStorage check since we want it to show every time
-    setShowHelp(true);
-  }, []);
-
-  // Function to add a router
-  const addRouter = () => {
-    const id = nextRouterId.toString();
-    const newRouters = {
-      ...routers,
-      [id]: { id, x: routerX, y: routerY, z: routerZ }
-    };
-    setRouters(newRouters);
-    setNextRouterId(prev => prev + 1);
-
-    // Reinitialize network with new topology
-    const topology = {};
-    Object.keys(newRouters).forEach(routerId => {
-      topology[routerId] = [];
-    });
-
-    links.forEach(link => {
-      if (!topology[link.source]) topology[link.source] = [];
-      if (!topology[link.destination]) topology[link.destination] = [];
-
-      topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-      topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-    });
-
-    // Always create a new network when router is added
-    const newNetwork = new Network(topology);
-    setNetwork(newNetwork);
-    setConvergenceStatus('Router added. Press "Run Next Iteration" to see DVR updates...');
-
-    // If a router is selected, update its routing table in the UI
-    if (selectedRouter) {
-      setTimeout(() => updateRoutingTable(selectedRouter), 0);
-    }
-
-    // Clear highlighted path when topology changes
-    resetHighlightedPath();
-  };
-
-  // Function to delete a router
-  const deleteRouter = (id) => {
-    const newRouters = { ...routers };
-    delete newRouters[id];
-
-    // Also delete all links connected to this router
-    const newLinks = links.filter(link =>
-      link.source !== id && link.destination !== id
-    );
-
-    // Remove any animations involving this router
-    const newAnimations = animations.filter(anim =>
-      anim.source !== id && anim.target !== id
-    );
-
-    setRouters(newRouters);
-    setLinks(newLinks);
-    setAnimations(newAnimations);
-
-    // Update network topology
-    if (network) {
-      const topology = {};
-      Object.keys(newRouters).forEach(routerId => {
-        topology[routerId] = [];
-      });
-
-      newLinks.forEach(link => {
-        if (!topology[link.source]) topology[link.source] = [];
-        if (!topology[link.destination]) topology[link.destination] = [];
-
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
-
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-      setConvergenceStatus('Router deleted. Press "Run Next Iteration" to see DVR updates...');
-
-      // If a router is selected and it's not the deleted one, update its routing table in the UI
-      if (selectedRouter && selectedRouter !== id) {
-        updateRoutingTable(selectedRouter);
-      }
-    }
-
-    if (selectedRouter === id) {
-      setSelectedRouter(null);
-      setRoutingTable({});
-    }
-
-    // Clear highlighted path when topology changes
-    resetHighlightedPath();
-  };
-
-  // Function to add a link
-  const addLink = () => {
-    if (!source || !destination || source === destination) return;
-
-    // Check if link already exists
-    const exists = links.some(link =>
-      (link.source === source && link.destination === destination) ||
-      (link.source === destination && link.destination === source)
-    );
-
-    if (!exists) {
-      const newLink = { source, destination, cost: parseInt(cost) };
-      const newLinks = [...links, newLink];
-      setLinks(newLinks);
-
-      // Update network topology
-      const topology = {};
-      Object.keys(routers).forEach(routerId => {
-        topology[routerId] = [];
-      });
-
-      newLinks.forEach(link => {
-        if (!topology[link.source]) topology[link.source] = [];
-        if (!topology[link.destination]) topology[link.destination] = [];
-
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
-
-      // Always create a new network when link is added
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-      setConvergenceStatus('Link added. Press "Run Next Iteration" to see DVR updates...');
-
-      // If a router is selected, update its routing table in the UI
-      if (selectedRouter) {
-        setTimeout(() => updateRoutingTable(selectedRouter), 0);
-      }
-    }
-
-    // Clear highlighted path when topology changes
-    resetHighlightedPath();
-  };
-
-  // Function to reset iteration counter
-  const resetIterations = () => {
-    // Reset UI iteration counter to 0
-    setIteration(0);
-
-    // Create a fresh network with the current topology
-    if (routers && Object.keys(routers).length > 0) {
-      const topology = {};
-
-      // Initialize each router with empty links
-      Object.keys(routers).forEach(id => {
-        topology[id] = [];
-      });
-
-      // Add all links to topology
-      links.forEach(link => {
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
-
-      // Create a new network to reset all routing tables
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-
-      // Reset the routing table display if a router is selected
-      if (selectedRouter) {
-        setTimeout(() => updateRoutingTable(selectedRouter), 0);
-      }
-    }
-
-    setConvergenceStatus('Network reset. Press "Run Next Iteration" to start...');
-
-    // Clear animations
-    setAnimations([]);
-  };
-
-  // Function to handle router failure
-  const handleRouterFailure = (id) => {
-    if (network) {
-      // Remove router from UI
-      const newRouters = { ...routers };
-      delete newRouters[id];
-
-      // Remove links connected to this router
-      const newLinks = links.filter(link =>
-        link.source !== id && link.destination !== id
-      );
-
-      setRouters(newRouters);
-      setLinks(newLinks);
-
-      // Create new network with updated topology
-      const topology = {};
-      Object.keys(newRouters).forEach(routerId => {
-        topology[routerId] = [];
-      });
-
-      newLinks.forEach(link => {
-        if (!topology[link.source]) topology[link.source] = [];
-        if (!topology[link.destination]) topology[link.destination] = [];
-
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
-
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-      setConvergenceStatus('Router failed. Press "Run Next Iteration" to see DVR updates...');
-
-      // If a router is selected and it's not the failed one, update its routing table
-      if (selectedRouter && selectedRouter !== id) {
-        updateRoutingTable(selectedRouter);
-      } else if (selectedRouter === id) {
-        setSelectedRouter(null);
-        setRoutingTable({});
-      }
-    }
-  };
-
-  // Function to run algorithm iterations
-  const runIteration = () => {
-    // If no network exists yet, create one
-    if (!network) {
-      // Check if we have routers to create a network
-      if (Object.keys(routers).length === 0) {
-        setConvergenceStatus('⚠️ Please add routers first before running iterations');
-        return;
-      }
-
-      // Check if we have links to create a network
-      if (links.length === 0) {
-        setConvergenceStatus('⚠️ Please add links between routers before running iterations');
-        return;
-      }
-
-      // Create network topology
-      const topology = {};
-
-      // Initialize each router with empty links
-      Object.keys(routers).forEach(id => {
-        topology[id] = [];
-      });
-
-      // Add all links to topology
-      links.forEach(link => {
-        topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-        topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-      });
-
-      // Create the network
-      const newNetwork = new Network(topology);
-      setNetwork(newNetwork);
-      // Set iteration to match network's internal iteration (0)
-      setIteration(0);
-      console.log("Network initialized with topology:", topology);
-    }
-
-    if (running) return; // Prevent multiple simultaneous iterations
-
-    setRunning(true);
-    setConvergenceStatus('Running DVR iteration...');
-
-    // Create update message animations
-    const updateAnimations = [];
-
-    // Only create animations for active links
-    links.forEach(link => {
-      const sourceRouter = network?.routers[link.source];
-      const destRouter = network?.routers[link.destination];
-
-      if (sourceRouter?.isActive && destRouter?.isActive) {
-        updateAnimations.push({
-          type: 'update',
-          source: link.source,
-          target: link.destination,
-          progress: 0,
-          startTime: Date.now(),
-          duration: animationSpeed * 1000,
-          iteration: iteration
-        });
-
-        updateAnimations.push({
-          type: 'update',
-          source: link.destination,
-          target: link.source,
-          progress: 0,
-          startTime: Date.now(),
-          duration: animationSpeed * 1000,
-          iteration: iteration
-        });
-      }
-    });
-
-    setAnimations(prev => [...prev, ...updateAnimations]);
-
-    setTimeout(() => {
-      try {
-        // Double-check that network is initialized
-        if (!network) {
-          setRunning(false);
-          setConvergenceStatus('⚠️ Network initialization failed. Please try again.');
-          return;
-        }
-
-        console.log("Running iteration on network:", network);
-
-        // Store current routing tables for comparison
-        const previousRoutingTables = {};
-        Object.keys(network.routers).forEach(routerId => {
-          previousRoutingTables[routerId] = JSON.parse(JSON.stringify(network.routers[routerId].routingTable));
-        });
-
-        // Run a single iteration
-        const hasChanges = network.runIteration();
-        console.log("### Network runIteration returned hasChanges:", hasChanges);
-
-        // Get the current iteration from the network
-        const currentIteration = network.iteration - 1; // The iteration we just completed
-
-        // Update our UI iteration to match the network's iteration
-        setIteration(network.iteration);
-        setRunning(false);
-
-        console.log(`Completed iteration ${currentIteration}, new iteration is ${network.iteration}`);
-
-        // Get current tables after running the iteration
-        const currentRoutingTables = {};
-        Object.keys(network.routers).forEach(routerId => {
-          currentRoutingTables[routerId] = JSON.parse(JSON.stringify(network.routers[routerId].routingTable));
-        });
-
-        // Check for convergence using our explicit comparison function
-        const converged = checkForConvergence(currentRoutingTables, previousTables);
-
-        // Store current tables for next iteration
-        setPreviousTables(currentRoutingTables);
-
-        // First check for convergence using our explicit check
-        if (converged) {
-          console.log("CONVERGENCE DETECTED - Network has converged (explicit check)!");
-          // Remove the alert
-          setConvergenceStatus('✅ Routing tables converged');
-          setShowConvergenceModal(true);
-          setConvergenceDetected(true);
-        }
-        // Then also check using the hasChanges flag as a backup
-        else if (!hasChanges && currentIteration > 0) {
-          console.log("CONVERGENCE DETECTED - Network has converged (hasChanges check)!");
-          // Remove the alert
-          setConvergenceStatus('✅ Routing tables converged');
-          setShowConvergenceModal(true);
-          setConvergenceDetected(true);
-        }
-
-        // Ensure routing table display is updated for currently selected router
-        if (selectedRouter) {
-          console.log("Updating routing table for selected router after iteration");
-          updateRoutingTable(selectedRouter);
-        }
-      } catch (error) {
-        console.error('Error during iteration:', error);
-        setRunning(false);
-        setConvergenceStatus('⚠️ Error during iteration: ' + error.message);
-      }
-    }, animationSpeed * 1000);
-  };
-
-  // Function to view router's routing table
-  const viewRoutingTable = (id) => {
-    console.log(`Router ${id} clicked, previously selected: ${selectedRouter}`);
-
-    // Toggle selection if clicking the same router again
-    if (id === selectedRouter) {
-      setSelectedRouter(null);
-      setRoutingTable({});
-      console.log("Router deselected, clearing routing table");
-    } else {
-      setSelectedRouter(id);
-      console.log(`Router ${id} selected, updating routing table`);
-      // Ensure routing table is updated immediately
-      if (network && network.routers[id]) {
-        const updatedTable = JSON.parse(JSON.stringify(network.routers[id].routingTable));
-        console.log("New routing table:", updatedTable);
-        setRoutingTable(updatedTable);
-      } else {
-        console.log(`Cannot update routing table: Router ${id} not found in network`);
-        setRoutingTable({});
-      }
-    }
-  };
-
-  // Update routing table data
-  const updateRoutingTable = (id) => {
-    if (network && network.routers[id]) {
-      console.log(`Updating routing table for router ${id}:`, network.routers[id].routingTable);
-
-      // Create a new object to ensure React detects the change
-      const updatedTable = JSON.parse(JSON.stringify(network.routers[id].routingTable));
-      setRoutingTable(updatedTable);
-    } else {
-      console.log(`Cannot update routing table for router ${id}: Router not found or network not initialized`);
-      setRoutingTable({});
-    }
-  };
-
-  // Function to delete a link
-  const deleteLink = () => {
-    if (!selectedLink) return;
-
-    const [source, destination] = selectedLink.split('-');
-
-    // Filter out the selected link
-    const newLinks = links.filter(link =>
-      !((link.source === source && link.destination === destination) ||
-        (link.source === destination && link.destination === source))
-    );
-
-    setLinks(newLinks);
-
-    // Update network topology without animations
-    if (network) {
-      // Get router references
-      const sourceRouter = network.routers[source];
-      const destRouter = network.routers[destination];
-
-      if (sourceRouter && destRouter) {
-        // Remove the link from both routers' routing tables
-        sourceRouter.handleLinkFailure(destination);
-        destRouter.handleLinkFailure(source);
-
-        // Create new network with updated topology
-        const topology = {};
-        Object.keys(routers).forEach(routerId => {
-          topology[routerId] = [];
-        });
-
-        newLinks.forEach(link => {
-          if (!topology[link.source]) topology[link.source] = [];
-          if (!topology[link.destination]) topology[link.destination] = [];
-
-          topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-          topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-        });
-
-        const newNetwork = new Network(topology);
-        // Copy over routing tables from the old network
-        Object.keys(network.routers).forEach(routerId => {
-          if (newNetwork.routers[routerId]) {
-            newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
-          }
-        });
-
-        setNetwork(newNetwork);
-        setConvergenceStatus('Link removed. Press "Run Next Iteration" to see DVR updates...');
-
-        // Update the UI with the initial state
-        if (selectedRouter) {
-          updateRoutingTable(selectedRouter);
-        }
-      }
-    }
-
-    setSelectedLink('');
-
-    // Clear highlighted path when topology changes
-    resetHighlightedPath();
-  };
-
-  // New function to handle link failure
-  const handleLinkFailure = (source, destination) => {
-    if (network) {
-      // Find and remove the link from the links array
-      const newLinks = links.filter(link =>
-        !((link.source === source && link.destination === destination) ||
-          (link.source === destination && link.destination === source))
-      );
-      setLinks(newLinks);
-
-      // Update network topology without animations
-      const sourceRouter = network.routers[source];
-      const destRouter = network.routers[destination];
-
-      if (sourceRouter && destRouter) {
-        // Remove the link from both routers' routing tables
-        sourceRouter.handleLinkFailure(destination);
-        destRouter.handleLinkFailure(source);
-
-        // Create new network with updated topology
-        const topology = {};
-        Object.keys(routers).forEach(routerId => {
-          topology[routerId] = [];
-        });
-
-        newLinks.forEach(link => {
-          if (!topology[link.source]) topology[link.source] = [];
-          if (!topology[link.destination]) topology[link.destination] = [];
-
-          topology[link.source].push({ neighbor: link.destination, cost: link.cost });
-          topology[link.destination].push({ neighbor: link.source, cost: link.cost });
-        });
-
-        const newNetwork = new Network(topology);
-        // Copy over routing tables from the old network
-        Object.keys(network.routers).forEach(routerId => {
-          if (newNetwork.routers[routerId]) {
-            newNetwork.routers[routerId].routingTable = { ...network.routers[routerId].routingTable };
-          }
-        });
-
-        setNetwork(newNetwork);
-        setConvergenceStatus('Link removed. Press "Run Next Iteration" to see DVR updates...');
-
-        // Update the UI with the initial state
-        if (selectedRouter) {
-          updateRoutingTable(selectedRouter);
-        }
-      }
-    }
-  };
-
-  // New function to find path
-  const findPath = () => {
-    if (!pathSource || !pathDestination || !network) return;
-
-    const result = network.findPath(pathSource, pathDestination);
-    setPathResult(result);
-
-    // Set the highlighted path if a path was found
-    if (result.path && result.path.length > 0) {
-      setHighlightedPath(result.path);
-    } else {
-      setHighlightedPath([]);
-    }
-  };
-
-  // Reset highlighted path when changing router or link configurations
-  const resetHighlightedPath = () => {
+  const [showConvergence, setShowConvergence] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  // Only so the comparison table can name what it ran on. The live counts
+  // travel with it, so an edited preset still describes itself honestly.
+  const [presetName, setPresetName] = useState(() => worldRef.current.name);
+
+  // The only timer in the app; make sure it never outlives the component.
+  useEffect(() => () => clearTimeout(packetTimerRef.current), []);
+
+  const network = networkRef.current;
+  const { routerIds, links, tables, infinityCost, correctness, stats, protocol, options } =
+    snapshot;
+  const timed = snapshot.mode === 'timers';
+  const downRouters = new Set(
+    routerIds.filter((id) => snapshot.status[id] && !snapshot.status[id].isActive)
+  );
+  const maxCost = maxLinkCostFor(infinityCost);
+  // Something has to have happened before "converged" means anything, and what
+  // counts as something differs: a round in one mode, a second in the other.
+  const converged = snapshot.converged && (timed ? snapshot.clock.time > 0 : snapshot.iteration > 0);
+
+  /** Pull a fresh immutable view out of the engine. */
+  function commit(message) {
+    setSnapshot(network.getSnapshot());
+    if (message) setStatus(message);
+  }
+
+  /** Anything that changes the topology invalidates a displayed path. */
+  function clearPath() {
     setHighlightedPath([]);
     setPathResult(null);
+  }
+
+  /**
+   * Turn what the engine just sent into animated spheres.
+   *
+   * `spreadSeconds` is the stretch of *simulated* time the messages came from.
+   * A round has no width, so everything leaves at once; a second of timer mode
+   * does, and playing it back in proportion is what makes the jittered updates
+   * look jittered instead of arriving in one synchronised volley — which is
+   * precisely the thing the mode exists to disprove.
+   */
+  function spawnPackets(exchanges, spreadSeconds = 0) {
+    clearTimeout(packetTimerRef.current);
+    if (exchanges.length === 0 || animationSeconds <= 0) {
+      setPackets([]);
+      return;
+    }
+    const duration = animationSeconds * 1000;
+    const startedAt = performance.now();
+    const sequence = packetSequenceRef.current;
+    packetSequenceRef.current += 1;
+
+    const stamps = exchanges.map((exchange) => exchange.at).filter(Number.isFinite);
+    const first = stamps.length > 0 ? Math.min(...stamps) : 0;
+    const span = stamps.length > 0 ? Math.max(...stamps) - first : 0;
+    const window =
+      spreadSeconds > 0 && span > 0
+        ? Math.min((span / Math.max(speed, 1)) * 1000, SIM.timers.maxSpreadMs)
+        : 0;
+    const offsetOf = (exchange) =>
+      window === 0 || !Number.isFinite(exchange.at)
+        ? 0
+        : (window * (exchange.at - first)) / span;
+
+    setPackets(
+      exchanges.map((exchange, index) => ({
+        key: `${sequence}-${index}`,
+        from: exchange.from,
+        to: exchange.to,
+        // The scene colours the sphere from its kind. The caption prefers what
+        // the message itself said (an LSA names the router that wrote it), then
+        // the protocol's own label.
+        kind: exchange.kind,
+        label: exchange.label || protocol.messageLabel,
+        startedAt: startedAt + offsetOf(exchange),
+        duration,
+      }))
+    );
+    packetTimerRef.current = setTimeout(() => setPackets([]), duration + window + 60);
+  }
+
+  /* ---------------- topology ---------------- */
+
+  function addRouter() {
+    // Read the live engine, not `snapshot`: React batches events, so two rapid
+    // clicks would otherwise both compute the same id and the second would be
+    // silently dropped.
+    const existing = network.routerIds;
+    const id = nextFreeId(existing);
+    const placement = autoPlace
+      ? autoPosition(existing.length)
+      : {
+          x: toNumber(routerX, 0, SIM.coordinate),
+          y: toNumber(routerY, 0, SIM.coordinate),
+          z: toNumber(routerZ, 0, SIM.coordinate),
+        };
+
+    network.addRouter(id);
+    setPositions((previous) => ({ ...previous, [id]: placement }));
+    clearPath();
+    commit(info(`Router ${id} added. It starts out knowing only itself.`));
+  }
+
+  function deleteRouter(id) {
+    network.removeRouter(id);
+    setPositions((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    if (selectedRouter === id) setSelectedRouter(null);
+    if (linkSource === id) setLinkSource('');
+    if (linkDestination === id) setLinkDestination('');
+    if (pathSource === id) setPathSource('');
+    if (pathDestination === id) setPathDestination('');
+    clearPath();
+    commit(warn(`Router ${id} removed. Run rounds to let its neighbours notice.`));
+  }
+
+  function toggleRouterPower(id) {
+    const goingDown = !downRouters.has(id);
+    network.setRouterActive(id, !goingDown);
+    clearPath();
+    commit(
+      goingDown
+        ? warn(`Router ${id} is down. It stops advertising immediately.`)
+        : good(`Router ${id} is back up.`)
+    );
+  }
+
+  function addLink() {
+    if (!linkSource || !linkDestination) {
+      setStatus(warn('Pick both a source and a destination router.'));
+      return;
+    }
+    if (linkSource === linkDestination) {
+      setStatus(warn('A router cannot link to itself.'));
+      return;
+    }
+    if (network.hasLink(linkSource, linkDestination)) {
+      setStatus(warn(`Routers ${linkSource} and ${linkDestination} are already linked.`));
+      return;
+    }
+    const cost = toNumber(linkCost, SIM.defaultLinkCost, {
+      min: SIM.minLinkCost,
+      max: maxCost,
+    });
+    network.addLink(linkSource, linkDestination, cost);
+    clearPath();
+    commit(info(`Link ${linkSource} ↔ ${linkDestination} added with cost ${cost}.`));
+  }
+
+  function updateLinkCost(source, destination, raw) {
+    const cost = toNumber(raw, SIM.defaultLinkCost, { min: SIM.minLinkCost, max: maxCost });
+    network.setLinkCost(source, destination, cost);
+    clearPath();
+    commit(info(`Link ${source} ↔ ${destination} now costs ${cost}.`));
+  }
+
+  function deleteLink(source, destination) {
+    network.removeLink(source, destination);
+    clearPath();
+    commit(
+      warn(
+        `Link ${source} ↔ ${destination} failed. Both endpoints noticed at once; ` +
+          'the rest of the network still has stale routes.'
+      )
+    );
+  }
+
+  function loadPreset(presetId) {
+    const preset = PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+
+    // The mode and the seed are settings, not part of the topology, so a new
+    // preset arrives on the clock the user is already running.
+    const world = buildWorld(preset, protocol.id, optionsByProtocolRef.current[protocol.id], {
+      mode: snapshot.mode,
+      seed: snapshot.seed,
+    });
+    worldRef.current = world;
+    networkRef.current = world.network;
+
+    setPlaying(false);
+    setPositions(world.positions);
+    setSnapshot(world.network.getSnapshot());
+    setPresetName(preset.name);
+    setSelectedRouter(null);
+    setLinkSource('');
+    setLinkDestination('');
     setPathSource('');
     setPathDestination('');
-  };
+    clearPath();
+    setPackets([]);
+    setShowConvergence(false);
+    setFitSignal((value) => value + 1);
+    setStatus(info(`Loaded "${preset.name}". ${preset.summary}`));
+  }
 
-  // Add this new function to check for convergence
-  const checkForConvergence = (currentTables, prevTables) => {
-    // Skip check if this is the first iteration or there are no previous tables
-    if (iteration === 0 || Object.keys(prevTables).length === 0) {
+  /**
+   * Swap the algorithm without touching the wiring.
+   *
+   * The topology, the router positions and the ground truth all survive; only
+   * what the routers had learned is thrown away. That is what makes two
+   * protocols comparable on identical input.
+   */
+  function selectProtocol(protocolId) {
+    if (protocolId === protocol.id) return;
+    setPlaying(false);
+    network.setProtocol(protocolId, optionsByProtocolRef.current[protocolId]);
+    setPackets([]);
+    setShowConvergence(false);
+    setInspectorTab('table');
+    clearPath();
+    commit(
+      info(
+        `Switched to ${network.protocol.name}. ${network.protocol.summary} ` +
+          'The topology is unchanged; the round counter starts again.'
+      )
+    );
+  }
+
+  /* ---------------- algorithm ---------------- */
+
+  function guardRunnable() {
+    if (routerIds.length === 0) {
+      setStatus(warn('Add at least one router first.'));
       return false;
     }
-
-    // Check if we have the same routers in both tables
-    const currentRouters = Object.keys(currentTables);
-    const prevRouters = Object.keys(prevTables);
-
-    if (currentRouters.length !== prevRouters.length) {
+    if (links.length === 0) {
+      setStatus(warn('Add at least one link before running a round.'));
       return false;
     }
-
-    // Compare each router's table
-    for (const routerId of currentRouters) {
-      const currentTable = currentTables[routerId];
-      const prevTable = prevTables[routerId];
-
-      // Skip if router doesn't exist in previous tables
-      if (!prevTable) {
-        return false;
-      }
-
-      // Compare destinations
-      const currentDests = Object.keys(currentTable);
-      const prevDests = Object.keys(prevTable);
-
-      if (currentDests.length !== prevDests.length) {
-        return false;
-      }
-
-      // Check each destination's cost and next hop
-      for (const dest of currentDests) {
-        if (!prevTable[dest]) {
-          return false;
-        }
-
-        // Check cost
-        if (currentTable[dest].cost !== prevTable[dest].cost) {
-          return false;
-        }
-
-        // Check next hop
-        if (currentTable[dest].nextHop !== prevTable[dest].nextHop) {
-          return false;
-        }
-      }
-    }
-
-    // If we got here, the tables are identical
-    console.log("TABLES IDENTICAL - CONVERGENCE DETECTED!");
     return true;
-  };
+  }
+
+  function runIteration() {
+    if (!guardRunnable()) return;
+
+    // Only celebrate the transition into convergence, not every click after it.
+    const wasConverged = converged;
+    const result = network.runIteration();
+    spawnPackets(result.exchanges);
+    setSnapshot(network.getSnapshot());
+
+    if (result.changed) {
+      setStatus(info(`Round ${result.iteration} complete. Tables are still changing.`));
+    } else if (wasConverged) {
+      setStatus(info(`Round ${result.iteration} ran and changed nothing — still converged.`));
+    } else {
+      setShowConvergence(true);
+      setStatus(good(`Converged after ${result.iteration} rounds — no table changed.`));
+    }
+  }
+
+  function runToConvergence() {
+    if (!guardRunnable()) return;
+
+    const wasConverged = converged;
+    const run = network.runToConvergence();
+    const { rounds, converged: didConverge } = run;
+    // In timer mode the run covers however long it took; the packets from its
+    // final step are the ones worth showing, all at once.
+    spawnPackets(network.lastExchanges);
+    setSnapshot(network.getSnapshot());
+
+    if (timed) {
+      setStatus(
+        didConverge
+          ? good(`Quiet after ${Math.round(run.seconds)} simulated seconds.`)
+          : warn(
+              `Still not quiet after the ${SIM.timers.maxConvergenceSeconds}-second safety limit.`
+            )
+      );
+      if (didConverge && !wasConverged) setShowConvergence(true);
+      return;
+    }
+
+    if (rounds === 0 || (wasConverged && didConverge)) {
+      setStatus(info('Already converged — nothing left to exchange.'));
+    } else if (didConverge) {
+      setShowConvergence(true);
+      setStatus(good(`Converged after ${rounds} more round${rounds === 1 ? '' : 's'}.`));
+    } else {
+      setStatus(
+        warn(
+          `Stopped after the ${SIM.maxConvergenceRounds}-round safety limit without converging.`
+        )
+      );
+    }
+  }
+
+  /* ---------------- the other clock ---------------- */
+
+  /** Shared tail for every control that moves simulated time forward. */
+  function stepClock(run) {
+    if (!guardRunnable()) return null;
+    const result = run(network);
+    spawnPackets(result.exchanges, result.seconds);
+    setSnapshot(network.getSnapshot());
+    return result;
+  }
+
+  function stepSeconds() {
+    const result = stepClock((simulation) => simulation.advance(SIM.timers.stepSeconds));
+    if (result) {
+      setStatus(
+        info(
+          `Advanced ${SIM.timers.stepSeconds}s. ${
+            result.exchanges.length === 0
+              ? 'Nothing was due.'
+              : `${result.exchanges.length} message(s) went out.`
+          }`
+        )
+      );
+    }
+  }
+
+  function stepToNextEvent() {
+    const result = stepClock((simulation) => simulation.stepToNextEvent());
+    if (!result) return;
+    setStatus(
+      result.ran
+        ? info(
+            `Skipped ${Math.round(result.seconds)}s to the next event — nothing happens in ` +
+              'between, so nothing has to be simulated.'
+          )
+        : warn('Nothing is scheduled. Every router is switched off.')
+    );
+  }
+
+  /**
+   * The play loop: the only thing in the app that advances by itself.
+   *
+   * Ten ticks a second rather than one per animation frame — each tick is a
+   * full React render, and the physics does not care, because the clock is
+   * advanced by however much real time actually passed rather than by a fixed
+   * step.
+   */
+  useEffect(() => {
+    if (!playing || !timed) return undefined;
+    let last = performance.now();
+
+    const id = setInterval(() => {
+      const now = performance.now();
+      const elapsed = Math.min((now - last) / 1000, SIM.timers.maxRealStep);
+      last = now;
+      stepClock((simulation) => simulation.advance(elapsed * speed));
+    }, SIM.timers.tickMs);
+
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, timed, speed, animationSeconds]);
+
+  // Playing a clock that no longer exists would be a timer with nothing to do.
+  useEffect(() => {
+    if (!timed && playing) setPlaying(false);
+  }, [timed, playing]);
+
+  function selectMode(mode) {
+    if (mode === snapshot.mode) return;
+    setPlaying(false);
+    network.setMode(mode);
+    setPackets([]);
+    setShowConvergence(false);
+    setInspectorTab('table');
+    clearPath();
+    // Deliberately says nothing about *which* timers: they are RIP's 30 / 180 / 120
+    // under one protocol and 802.1D's 2 / 15 / 20 under another, and naming either
+    // here would be wrong for the other. The Protocol panel lists whichever apply.
+    commit(
+      info(
+        mode === 'timers'
+          ? 'Timer mode: the lockstep is gone. Every router now runs on its own clock, ' +
+              'with this protocol‘s real timers — press Play, or step to the next event.'
+          : 'Round mode: one round, every router speaks, every router listens.'
+      )
+    );
+  }
+
+  function applySeed(raw) {
+    const seed = toNumber(raw, SIM.timers.defaultSeed, {
+      min: SIM.timers.minSeed,
+      max: SIM.timers.maxSeed,
+    });
+    setSeedText(String(seed));
+    setPlaying(false);
+    network.setSeed(seed);
+    setPackets([]);
+    setShowConvergence(false);
+    clearPath();
+    commit(info(`Seed ${seed}. The run starts again and will play out identically every time.`));
+  }
+
+  /**
+   * The comparison runs on a copy, so it is safe at any moment — but on a
+   * network with no links every row would report the same nothing, which is a
+   * worse answer than the warning `guardRunnable` already gives.
+   */
+  function openComparison() {
+    if (!guardRunnable()) return;
+    setShowComparison(true);
+  }
+
+  /**
+   * Put the whole scenario in the address bar, and on the clipboard if the
+   * browser will allow it.
+   *
+   * The URL is updated either way, with `replaceState` rather than a navigation
+   * so the back button still means what it did — the address bar is the reliable
+   * half, since clipboard access needs a permission the user may have refused
+   * and an insecure origin does not get at all.
+   */
+  async function shareScenario() {
+    const url = scenarioUrl(network.getSnapshot(), positions, window.location.href);
+    window.history.replaceState(null, '', url);
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus(
+        good(
+          'Link copied. It carries the topology, the protocol, every setting and ' +
+            'the seed — but not how far the run has got, so it always starts fresh.'
+        )
+      );
+    } catch (error) {
+      // Refused, or no clipboard at all on this origin. The address bar is the
+      // scenario now, which is the thing that actually had to happen.
+      setStatus(info('The address bar now holds this scenario — copy it from there.'));
+    }
+  }
+
+  function resetTables() {
+    setPlaying(false);
+    network.reset();
+    setPackets([]);
+    setShowConvergence(false);
+    clearPath();
+    commit(info('Tables reset. Each router knows only what it can see for itself again.'));
+  }
+
+  function updateOptions(partial) {
+    network.setOptions(partial);
+    optionsByProtocolRef.current[protocol.id] = {
+      ...optionsByProtocolRef.current[protocol.id],
+      ...partial,
+    };
+    setShowConvergence(false);
+    clearPath();
+    commit(info('Protocol settings changed. Run more rounds to see the effect.'));
+  }
+
+  function updateRouterOption(key, value, neighborId) {
+    network.setRouterOption(selectedRouter, key, value, neighborId);
+    setShowConvergence(false);
+    clearPath();
+    commit(info(`Router ${selectedRouter}: ${key} set to ${value}.`));
+  }
+
+  /* ---------------- path finder ---------------- */
+
+  function findPath() {
+    if (!pathSource || !pathDestination) {
+      setStatus(warn('Pick a source and a destination for the path.'));
+      return;
+    }
+    const walked = network.findPath(pathSource, pathDestination);
+    const optimal = network.shortestPath(pathSource, pathDestination);
+
+    setPathResult({ walked, optimal });
+    setHighlightedPath(walked.status === 'ok' ? walked.path : optimal.path);
+
+    if (walked.status !== 'ok') {
+      setStatus(warn(walked.message));
+    } else if (walked.cost !== optimal.cost) {
+      setStatus(
+        warn('The tables route this the long way round — they have not converged yet.')
+      );
+    } else {
+      setStatus(good(`Path found: ${walked.path.join(' → ')} (cost ${walked.cost}).`));
+    }
+  }
+
+  function selectRouter(id) {
+    setSelectedRouter((current) => (current === id ? null : id));
+  }
+
+  /* ---------------- render ---------------- */
+
+  const selectedTable = selectedRouter ? tables[selectedRouter] : null;
+  // A down router is not scored, so its rows simply carry no class.
+  const selectedCorrectness =
+    (selectedRouter && correctness && correctness.entries[selectedRouter]) || {};
+
+  // Derived from the live engine, but keyed on the snapshot so it is recomputed
+  // exactly when the tables are — never per frame.
+  const routeTreeEdges = useMemo(
+    () =>
+      showRouteTree && selectedRouter && protocol.hasRoutingTables
+        ? network.routeTreeEdges(selectedRouter)
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [network, snapshot, selectedRouter, showRouteTree, protocol.hasRoutingTables]
+  );
+
+  const inspectorTabs = useMemo(
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => (selectedRouter ? network.inspect(selectedRouter) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [network, snapshot, selectedRouter]
+  );
+  // Fall back to the table whenever the active tab has gone away — switching
+  // protocol or selecting a different router can both remove one.
+  const activeTab =
+    inspectorTab !== 'table' && inspectorTabs.some((tab) => tab.id === inspectorTab)
+      ? inspectorTab
+      : 'table';
+  const activeTabData = inspectorTabs.find((tab) => tab.id === activeTab);
+
+  /**
+   * Arrow-key movement within a tab strip, as a tablist is meant to behave.
+   *
+   * Only the selected tab is in the tab order (`tabIndex` above), so without this
+   * the other tabs would be unreachable from the keyboard entirely — the trade a
+   * roving tabindex makes, and this is the other half of it.
+   */
+  function moveTab(event, currentId) {
+    const ids = ['table', ...inspectorTabs.map((tab) => tab.id)];
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    let next = null;
+    if (step !== undefined) {
+      next = ids[(ids.indexOf(currentId) + step + ids.length) % ids.length];
+    } else if (event.key === 'Home') next = ids[0];
+    else if (event.key === 'End') next = ids[ids.length - 1];
+    if (next === null) return;
+
+    event.preventDefault();
+    setInspectorTab(next);
+    // The newly selected tab is the one that should hold focus, and it only
+    // becomes focusable once React has re-rendered with the new tabIndex.
+    requestAnimationFrame(() => {
+      const button = document.getElementById(`tab-${next}`);
+      if (button) button.focus();
+    });
+  }
+
+  const routerOptions = routerIds.map((id) => (
+    <option key={id} value={id}>
+      Router {id}
+    </option>
+  ));
+
+  const presetGroups = PRESET_GROUPS.map((group) => ({
+    group,
+    presets: PRESETS.filter((preset) => preset.group === group),
+  })).filter((entry) => entry.presets.length > 0);
 
   return (
     <div className="App">
       <HelpModal
         isOpen={showHelp}
         onClose={() => setShowHelp(false)}
+        protocol={protocol}
       />
-      {/* Convergence Modal */}
-      {showConvergenceModal && (
-        <div className="modal-overlay" onClick={() => setShowConvergenceModal(false)}>
-          <div className="modal-content"
-            style={{ backgroundColor: '#e6ffee', boxShadow: '0 0 10px green' }}
-            onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: 'green' }}>DVR Convergence</h2>
-            <p>The network has converged! All routing tables are stable.</p>
-            <button
-              style={{ backgroundColor: '#4CAF50', color: 'white', padding: '8px 16px' }}
-              onClick={() => setShowConvergenceModal(false)}>OK</button>
-          </div>
-        </div>
+
+      {/* Mounted only while open, so opening it is what runs the comparison —
+          the numbers can never lag a topology edited behind it. */}
+      {showComparison && (
+        <ComparisonModal
+          onClose={() => setShowComparison(false)}
+          topology={network.topology}
+          links={links}
+          topologyName={presetName}
+        />
       )}
 
-      {/* Help Modal */}
-      {showHelpModal && (
-        <div className="modal-overlay" onClick={() => setShowHelpModal(false)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            zIndex: 9999,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center'
-          }}>
-          <div className="modal-content"
-            style={{
-              backgroundColor: 'white',
-              padding: '20px',
-              borderRadius: '8px',
-              maxWidth: '700px',
-              maxHeight: '80vh',
-              overflowY: 'auto',
-              position: 'relative',
-              textAlign: 'left'
-            }}
-            onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#1976D2', marginTop: 0, textAlign: 'left' }}>Distance Vector Routing Simulator Help</h2>
-
-            <h3>What is this application?</h3>
-            <p>This is a simulator for the Distance Vector Routing (DVR) algorithm used in computer networks. It visualizes how routers exchange information to build their routing tables until they converge.</p>
-
-            <h3>How to use this application:</h3>
-            <ol>
-              <li><strong>Create a network</strong>:
-                <ul>
-                  <li>Add routers using the Router Controls (set X, Y, Z coordinates and click Add Router)</li>
-                  <li>Connect routers with links using the Link Controls (select source, destination, cost, then click Add Link)</li>
-                </ul>
-              </li>
-              <li><strong>Run the simulation</strong>:
-                <ul>
-                  <li>Click "Run Next Iteration" to advance the simulation one step</li>
-                  <li>Watch as routers exchange information and update their routing tables</li>
-                  <li>Continue running iterations until convergence (when tables stabilize)</li>
-                </ul>
-              </li>
-              <li><strong>Explore the network</strong>:
-                <ul>
-                  <li>Click on a router to see its routing table</li>
-                  <li>Use the Path Finder to find the shortest path between routers</li>
-                  <li>Delete links or routers to see how the network adapts</li>
-                </ul>
-              </li>
-            </ol>
-
-            <h3>Understanding the visualization:</h3>
-            <ul>
-              <li><strong>Routers</strong>: The blue cubes with numbers</li>
-              <li><strong>Links</strong>: The green tubes connecting routers with cost labels</li>
-              <li><strong>Animations</strong>: Blue spheres show routing updates being sent</li>
-              <li><strong>Red paths</strong>: Highlighted shortest paths when using the Path Finder</li>
-              <li><strong>Iterations</strong>: Each step of the algorithm as routers share information</li>
-              <li><strong>Convergence</strong>: When routing tables stop changing (indicated by an alert)</li>
-            </ul>
-
-            <h3>Tips:</h3>
-            <ul>
-              <li>You must create at least two routers and connect them before running iterations</li>
-              <li>At iteration 0, routers only know about themselves and direct neighbors</li>
-              <li>Rotating the view: Drag with left mouse button</li>
-              <li>Zooming: Use mouse wheel or pinch gesture</li>
-              <li>Panning: Drag with right mouse button</li>
-            </ul>
-
-            <button
-              style={{
-                backgroundColor: '#1976D2',
-                color: 'white',
-                padding: '8px 16px',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                marginTop: '20px'
-              }}
-              onClick={() => setShowHelpModal(false)}>Close Help</button>
-          </div>
-        </div>
+      {showConvergence && (
+        <Modal
+          onClose={() => setShowConvergence(false)}
+          label={timed ? 'Network is quiet' : 'Network has converged'}
+          className="modal-content--success"
+        >
+          <h2>{timed ? 'Quiet' : 'Converged'}</h2>
+          <p>
+            {timed
+              ? `Nothing has changed for a full ${protocol.quietSeconds}-second ` +
+                'stretch, and nothing is part-way through happening — the routers ' +
+                'are still talking, they just have nothing new to say.'
+              : 'A full round passed with nothing changing.'}{' '}
+            {protocol.hasRoutingTables
+              ? 'Every router now holds the best answer it can see — which is not ' +
+                'always the right one; check the correctness meter.'
+              : 'Every router now holds the best answer it can see.'}
+          </p>
+          <button type="button" onClick={() => setShowConvergence(false)}>
+            OK
+          </button>
+        </Modal>
       )}
 
       <div className="app-container">
-        {/* Left Control Panel */}
-        <div className="left-panel">
-          <div className="control-section">
-            <h2>Router Controls</h2>
+        {/* ---------------- left panel ---------------- */}
+        {/* Labelled regions, so both panels are landmarks a screen reader can
+            jump straight to rather than tabbing through the scene to reach. */}
+        <div className="left-panel" role="region" aria-label="Topology controls">
+          <CollapsibleSection title="Topology" defaultOpen>
             <div className="form-group">
-              <label>X: </label>
-              <input
-                type="number"
-                value={routerX}
-                onChange={(e) => setRouterX(parseInt(e.target.value))}
-              />
-            </div>
-            <div className="form-group">
-              <label>Y: </label>
-              <input
-                type="number"
-                value={routerY}
-                onChange={(e) => setRouterY(parseInt(e.target.value))}
-              />
-            </div>
-            <div className="form-group">
-              <label>Z: </label>
-              <input
-                type="number"
-                value={routerZ}
-                onChange={(e) => setRouterZ(parseInt(e.target.value))}
-              />
-            </div>
-            <button onClick={addRouter}>Add Router</button>
-          </div>
-
-          <div className="control-section">
-            <h2>Delete Router</h2>
-            <select onChange={(e) => deleteRouter(e.target.value)}>
-              <option value="">Select Router to Delete</option>
-              {Object.keys(routers).map(id => (
-                <option key={id} value={id}>{id}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="control-section">
-            <h2>Link Controls</h2>
-            <div className="form-group">
-              <label>Source: </label>
-              <select value={source} onChange={(e) => setSource(e.target.value)}>
-                <option value="">Select Source</option>
-                {Object.keys(routers).map(id => (
-                  <option key={id} value={id}>{id}</option>
+              <label htmlFor="protocol">Protocol</label>
+              <select
+                id="protocol"
+                value={protocol.id}
+                onChange={(event) => selectProtocol(event.target.value)}
+              >
+                {PROTOCOLS.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
                 ))}
               </select>
             </div>
             <div className="form-group">
-              <label>Destination: </label>
-              <select value={destination} onChange={(e) => setDestination(e.target.value)}>
-                <option value="">Select Destination</option>
-                {Object.keys(routers).map(id => (
-                  <option key={id} value={id}>{id}</option>
+              <label htmlFor="preset">Preset</label>
+              <select
+                id="preset"
+                defaultValue={DEFAULT_PRESET.id}
+                onChange={(event) => loadPreset(event.target.value)}
+              >
+                {presetGroups.map(({ group, presets }) => (
+                  <optgroup key={group} label={group}>
+                    {presets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
-            <div className="form-group">
-              <label>Cost: </label>
+            <button type="button" className="secondary" onClick={() => setFitSignal((v) => v + 1)}>
+              Fit view to network
+            </button>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Add Router">
+            <label className="checkbox-row">
               <input
+                type="checkbox"
+                checked={autoPlace}
+                onChange={(event) => setAutoPlace(event.target.checked)}
+              />
+              <span>Place automatically</span>
+            </label>
+
+            {!autoPlace && (
+              <>
+                {[
+                  ['X', routerX, setRouterX],
+                  ['Y', routerY, setRouterY],
+                  ['Z', routerZ, setRouterZ],
+                ].map(([axis, value, setValue]) => (
+                  <div className="form-group" key={axis}>
+                    <label htmlFor={`axis-${axis}`}>{axis}</label>
+                    <input
+                      id={`axis-${axis}`}
+                      type="number"
+                      value={value}
+                      min={SIM.coordinate.min}
+                      max={SIM.coordinate.max}
+                      step={SIM.coordinate.step}
+                      onChange={(event) => setValue(event.target.value)}
+                    />
+                  </div>
+                ))}
+              </>
+            )}
+
+            <button type="button" onClick={addRouter}>
+              Add Router
+            </button>
+          </CollapsibleSection>
+
+          <CollapsibleSection title={`Routers (${routerIds.length})`} defaultOpen>
+            {routerIds.length === 0 ? (
+              <p className="empty-note">No routers yet.</p>
+            ) : (
+              <ul className="entity-list">
+                {routerIds.map((id) => {
+                  const decoration = routerDecoration(
+                    snapshot.decorations.routers[id],
+                    selectedRouter === id
+                  );
+                  return (
+                    <li key={id} className="entity-row">
+                      <button
+                        type="button"
+                        className={`chip ${selectedRouter === id ? 'chip--active' : ''}`}
+                        style={decoration.style}
+                        onClick={() => selectRouter(id)}
+                        title={decoration.title || 'Inspect this router'}
+                      >
+                        Router {id}
+                        {decoration.suffix}
+                      </button>
+                      <span className="entity-actions">
+                        {protocol.hasRoutingTables && (
+                          <RouterScore score={correctness && correctness.routers[id]} />
+                        )}
+                        {/* `title` is a tooltip and is not reliably announced;
+                            `aria-label` is what carries the meaning of a button
+                            whose visible text is one word or a symbol. Both,
+                            because the tooltip is worth having for a mouse. */}
+                        <button
+                          type="button"
+                          className={downRouters.has(id) ? 'icon icon--warn' : 'icon'}
+                          onClick={() => toggleRouterPower(id)}
+                          title={downRouters.has(id) ? 'Bring router up' : 'Take router down'}
+                          aria-label={
+                            downRouters.has(id)
+                              ? `Bring router ${id} back up`
+                              : `Take router ${id} down`
+                          }
+                        >
+                          {downRouters.has(id) ? 'Up' : 'Down'}
+                        </button>
+                        <button
+                          type="button"
+                          className="icon icon--danger"
+                          onClick={() => deleteRouter(id)}
+                          title="Delete router"
+                          aria-label={`Delete router ${id}`}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Add Link">
+            <div className="form-group">
+              <label htmlFor="link-source">Source</label>
+              <select
+                id="link-source"
+                value={linkSource}
+                onChange={(event) => setLinkSource(event.target.value)}
+              >
+                <option value="">Select…</option>
+                {routerOptions}
+              </select>
+            </div>
+            <div className="form-group">
+              <label htmlFor="link-destination">Destination</label>
+              <select
+                id="link-destination"
+                value={linkDestination}
+                onChange={(event) => setLinkDestination(event.target.value)}
+              >
+                <option value="">Select…</option>
+                {routerOptions}
+              </select>
+            </div>
+            <div className="form-group">
+              <label htmlFor="link-cost">Cost</label>
+              <input
+                id="link-cost"
                 type="number"
-                value={cost}
-                onChange={(e) => setCost(parseInt(e.target.value))}
-                min="1"
+                value={linkCost}
+                min={SIM.minLinkCost}
+                max={maxCost}
+                onChange={(event) => setLinkCost(event.target.value)}
               />
             </div>
-            <button onClick={addLink}>Add Link</button>
-          </div>
+            <p className="hint">
+              Costs run from {SIM.minLinkCost} to {maxCost} (one below the infinity ceiling).
+            </p>
+            <button type="button" onClick={addLink}>
+              Add Link
+            </button>
+          </CollapsibleSection>
 
-          <div className="control-section">
-            <h2>Delete Link</h2>
-            <select value={selectedLink} onChange={(e) => setSelectedLink(e.target.value)}>
-              <option value="">Select Link to Delete</option>
-              {links.map((link, index) => (
-                <option key={index} value={`${link.source}-${link.destination}`}>
-                  {link.source} ↔ {link.destination} (Cost: {link.cost})
-                </option>
-              ))}
-            </select>
-            <button onClick={deleteLink} disabled={!selectedLink}>Delete Link</button>
-          </div>
+          <CollapsibleSection title={`Links (${links.length})`} defaultOpen>
+            {links.length === 0 ? (
+              <p className="empty-note">No links yet.</p>
+            ) : (
+              <ul className="entity-list">
+                {links.map((link) => (
+                  <li key={linkKey(link.source, link.destination)} className="entity-row">
+                    <span className="chip chip--static">
+                      {link.source} ↔ {link.destination}
+                    </span>
+                    <span className="entity-actions">
+                      <input
+                        className="cost-input"
+                        type="number"
+                        value={link.cost}
+                        min={SIM.minLinkCost}
+                        max={maxCost}
+                        title="Link cost"
+                        aria-label={`Cost of the link between ${link.source} and ${link.destination}`}
+                        onChange={(event) =>
+                          updateLinkCost(link.source, link.destination, event.target.value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="icon icon--danger"
+                        onClick={() => deleteLink(link.source, link.destination)}
+                        title="Break this link"
+                        aria-label={`Break the link between ${link.source} and ${link.destination}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CollapsibleSection>
         </div>
 
-        {/* Center Visualization */}
+        {/* ---------------- centre ---------------- */}
         <div className="visualization-container">
           <div className="visualization">
-            <Canvas>
+            <Canvas camera={SCENE.camera}>
               <Network3D
-                routers={routers}
+                routers={positions}
                 links={links}
                 selectedRouter={selectedRouter}
-                onRouterClick={viewRoutingTable}
-                routingTable={routingTable}
-                animations={animations}
-                iteration={iteration}
+                onRouterClick={selectRouter}
+                routingTable={selectedTable}
+                routingColumns={protocol.columns}
+                routingRowLabel={protocol.rowLabel}
+                routingCorrectness={selectedCorrectness}
+                decorations={snapshot.decorations}
+                routeTreeEdges={routeTreeEdges}
+                packets={packets}
                 highlightedPath={highlightedPath}
+                downRouters={downRouters}
+                infinityCost={infinityCost}
+                fitSignal={fitSignal}
               />
             </Canvas>
+
             <div className="iteration-display">
               <div className="iteration-counter">
-                Iteration: {iteration}
-                {convergenceStatus.includes('converged') &&
-                  <span style={{ color: 'red', fontWeight: 'bold', marginLeft: '10px' }}>
-                    CONVERGED!
-                  </span>
-                }
-              </div>
-              <div className="iteration-status">
-                {convergenceStatus}
-                {convergenceStatus.includes('converged') && (
-                  // <button
-                  //   onClick={() => alert('DVR Convergence')}
-                  //   style={{
-                  //     marginLeft: '10px',
-                  //     backgroundColor: '#d32f2f',
-                  //     color: 'white',
-                  //     border: 'none',
-                  //     padding: '5px 10px',
-                  //     borderRadius: '4px',
-                  //     cursor: 'pointer'
-                  //   }}
-                  // >
-                  //   Show Alert
-                  // </button>
-                  <></>
+                {timed ? (
+                  <>
+                    <ClockReadout time={snapshot.clock.time} />
+                    <span className="iteration-counter__aside">Round {snapshot.iteration}</span>
+                  </>
+                ) : (
+                  <>Round {snapshot.iteration}</>
                 )}
+                {converged && (
+                  <span className="badge badge--success">
+                    {timed ? 'QUIET' : 'CONVERGED'}
+                  </span>
+                )}
+                {protocol.hasRoutingTables && <CorrectnessMeter correctness={correctness} />}
+              </div>
+              {protocol.hasRoutingTables && <Sparkline values={stats.correctnessHistory} />}
+              {/*
+                The status line is the app's only running commentary — what the
+                last click did, and whether it worked. `polite` so it is read
+                after whatever the user was doing rather than interrupting it,
+                and `atomic` because a half-replaced sentence is worse than a
+                late one.
+              */}
+              <div
+                className={`iteration-status iteration-status--${status.tone}`}
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {status.text}
               </div>
             </div>
+
+            <SceneLegend entries={protocol.legend} />
           </div>
         </div>
 
-        {/* Right Control Panel */}
-        <div className="right-panel">
-          <div className="control-section">
-            <h2>Algorithm Controls</h2>
-            <button onClick={runIteration} disabled={running}>
-              {running ? "Running..." : "Run Next Iteration"}
-            </button>
-            <button onClick={resetIterations}>
-              Reset Iterations
-            </button>
-          </div>
+        {/* ---------------- right panel ---------------- */}
+        <div
+          className="right-panel"
+          role="region"
+          aria-label="Protocol and inspection controls"
+        >
+          <CollapsibleSection title="Run" defaultOpen>
+            {/* Only offered for protocols that declared timers. The others are
+                not broken in timer mode — they simply have no idea what a
+                second is, and a toggle that did nothing would be worse than
+                one that is not there. */}
+            {protocol.supportsTimers && (
+              <div
+                className="tab-strip tab-strip--modes"
+                role="group"
+                aria-label="Which clock to run on"
+              >
+                {[
+                  ['rounds', 'Rounds'],
+                  ['timers', 'Timers'],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    // A group of pressed-state buttons rather than a tablist: it
+                    // reuses the strip's look because it is the same gesture, but
+                    // it switches what the *simulation* does rather than which
+                    // view of it is shown, and calling it a tablist would promise
+                    // a panel that does not exist.
+                    aria-pressed={snapshot.mode === id}
+                    className={`tab ${snapshot.mode === id ? 'tab--active' : ''}`}
+                    onClick={() => selectMode(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
 
-          <div className="control-section">
-            <h2>Animation Control</h2>
-            <div className="form-group">
-              <label>Animation Speed: </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={animationSpeed}
-                onChange={(e) => setAnimationSpeed(parseInt(e.target.value))}
-              />
-              <span>{animationSpeed}s</span>
-            </div>
-          </div>
+            {timed ? (
+              <>
+                <button type="button" onClick={() => setPlaying((value) => !value)}>
+                  {playing ? 'Pause' : 'Play'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={stepSeconds}
+                  disabled={playing}
+                >
+                  Step {SIM.timers.stepSeconds}s
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={stepToNextEvent}
+                  disabled={playing}
+                >
+                  Step to Next Event
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={runIteration}>
+                Run Next Round
+              </button>
+            )}
 
-          <div className="control-section">
-            <h2>Path Finder</h2>
-            <select value={pathSource} onChange={(e) => setPathSource(e.target.value)}>
-              <option value="">Select Source</option>
-              {Object.keys(routers).map(id => (
-                <option key={id} value={id}>Router {id}</option>
-              ))}
-            </select>
-            <select value={pathDestination} onChange={(e) => setPathDestination(e.target.value)}>
-              <option value="">Select Destination</option>
-              {Object.keys(routers).map(id => (
-                <option key={id} value={id}>Router {id}</option>
-              ))}
-            </select>
             <button
+              type="button"
+              className="secondary"
+              onClick={runToConvergence}
+              disabled={playing}
+            >
+              Run to Convergence
+            </button>
+            <button type="button" className="ghost" onClick={resetTables}>
+              Reset Tables
+            </button>
+            <button type="button" className="secondary" onClick={openComparison}>
+              Compare Protocols
+            </button>
+            <button type="button" className="ghost" onClick={shareScenario}>
+              Copy Shareable Link
+            </button>
+
+            {timed && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="clock-speed">Speed</label>
+                  {/* A slider announces its raw value, so "10" would be read
+                      without saying 10 of what. `aria-valuetext` is the units. */}
+                  <input
+                    id="clock-speed"
+                    type="range"
+                    min={SIM.timers.minSpeed}
+                    max={SIM.timers.maxSpeed}
+                    step={1}
+                    value={speed}
+                    aria-valuetext={`${speed} simulated seconds per real second`}
+                    onChange={(event) => setSpeed(Number(event.target.value))}
+                  />
+                  <span className="animation-speed-value">{speed}×</span>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="clock-seed">Seed</label>
+                  <input
+                    id="clock-seed"
+                    type="number"
+                    value={seedText}
+                    min={SIM.timers.minSeed}
+                    max={SIM.timers.maxSeed}
+                    onChange={(event) => setSeedText(event.target.value)}
+                    onBlur={(event) => applySeed(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') applySeed(event.target.value);
+                    }}
+                  />
+                </div>
+                <p className="hint">
+                  Speed is simulated seconds per real second, so only the watching is sped
+                  up — the protocol's own timers stay at the values its RFC gives them, and
+                  they are listed in the Protocol panel. The seed drives every jittered
+                  decision, so the same number replays the same run exactly.
+                </p>
+              </>
+            )}
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Protocol" defaultOpen>
+            <p className="hint">{protocol.summary}</p>
+            <ProtocolOptions
+              schema={protocol.options}
+              values={options}
+              onChange={updateOptions}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Stats">
+            <StatsPanel
+              stats={stats}
+              correctness={correctness}
+              metrics={snapshot.metrics}
+              mode={snapshot.mode}
+              time={snapshot.clock.time}
+            />
+          </CollapsibleSection>
+
+          {/* Only in timer mode: in round mode the round counter and the packet
+              animation already say everything the log would. */}
+          {timed && (
+            <CollapsibleSection title="Event Log" defaultOpen>
+              <EventLog entries={snapshot.eventLog} limit={SIM.timers.eventLogVisible} />
+            </CollapsibleSection>
+          )}
+
+          <CollapsibleSection title="Animation">
+            <div className="form-group">
+              <label htmlFor="animation-speed">Packet time</label>
+              <input
+                id="animation-speed"
+                type="range"
+                min={SIM.animation.minSeconds}
+                max={SIM.animation.maxSeconds}
+                step={SIM.animation.step}
+                value={animationSeconds}
+                aria-valuetext={`${animationSeconds} seconds per packet`}
+                onChange={(event) => setAnimationSeconds(Number(event.target.value))}
+              />
+              <span className="animation-speed-value">{animationSeconds}s</span>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Path Finder">
+            <div className="form-group">
+              <label htmlFor="path-source">From</label>
+              <select
+                id="path-source"
+                value={pathSource}
+                onChange={(event) => setPathSource(event.target.value)}
+              >
+                <option value="">Select…</option>
+                {routerOptions}
+              </select>
+            </div>
+            <div className="form-group">
+              <label htmlFor="path-destination">To</label>
+              <select
+                id="path-destination"
+                value={pathDestination}
+                onChange={(event) => setPathDestination(event.target.value)}
+              >
+                <option value="">Select…</option>
+                {routerOptions}
+              </select>
+            </div>
+            <button
+              type="button"
               onClick={findPath}
               disabled={!pathSource || !pathDestination}
             >
               Find Path
             </button>
             <button
-              onClick={resetHighlightedPath}
-              disabled={!highlightedPath.length}
+              type="button"
+              className="ghost"
+              onClick={clearPath}
+              disabled={highlightedPath.length === 0}
             >
               Clear Path
             </button>
+
+            {protocol.hasRoutingTables && (
+              <>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={showRouteTree}
+                    onChange={(event) => setShowRouteTree(event.target.checked)}
+                  />
+                  <span>Show route tree</span>
+                </label>
+                <p className="hint">
+                  Every link the selected router's table actually uses, followed to each
+                  destination.
+                </p>
+              </>
+            )}
+
             {pathResult && (
               <div className="path-result">
-                {pathResult.path.length > 0 ? (
-                  <>
-                    <p>Path: {pathResult.path.join(' → ')}</p>
-                    <p>Total Cost: {pathResult.cost}</p>
-                  </>
-                ) : (
-                  <p>No path found</p>
-                )}
+                <p>
+                  <strong>Routing tables say:</strong>{' '}
+                  {pathResult.walked.status === 'ok'
+                    ? `${pathResult.walked.path.join(' → ')} (cost ${pathResult.walked.cost})`
+                    : pathResult.walked.message}
+                </p>
+                <p>
+                  <strong>Actual shortest:</strong>{' '}
+                  {pathResult.optimal.path.length > 0
+                    ? `${pathResult.optimal.path.join(' → ')} (cost ${pathResult.optimal.cost})`
+                    : 'No path exists'}
+                </p>
+                {pathResult.walked.status === 'ok' &&
+                  pathResult.walked.cost !== pathResult.optimal.cost && (
+                    <p className="path-result__warning">
+                      The tables have not converged yet — run more rounds.
+                    </p>
+                  )}
               </div>
             )}
-          </div>
+          </CollapsibleSection>
 
-          {selectedRouter && (
-            <div className="control-section">
-              <h2>Routing Table for Router {selectedRouter}</h2>
-              <div className="routing-table">
-                {Object.keys(routingTable).length > 0 ? (
-                  Object.entries(routingTable).map(([dest, info]) => (
-                    <div key={dest} className="routing-entry">
-                      <span>Destination: {dest}</span>
-                      <span>Next Hop: {info.nextHop || '-'}</span>
-                      <span>Cost: {info.cost === Infinity ? "∞" : info.cost}</span>
-                    </div>
-                  ))
-                ) : (
-                  <p>No routing table entries available.</p>
+          <CollapsibleSection
+            title={selectedRouter ? `Router ${selectedRouter}` : 'Router Inspector'}
+            defaultOpen
+          >
+            {!selectedRouter && (
+              <p className="empty-note">Click a router in the scene or the list to inspect it.</p>
+            )}
+            {selectedRouter && !selectedTable && (
+              <p className="empty-note">Router {selectedRouter} is no longer in the network.</p>
+            )}
+            {selectedRouter && selectedTable && (
+              <>
+                {inspectorTabs.length > 0 && (
+                  <div className="tab-strip" role="tablist" aria-label="Router inspector views">
+                    {[{ id: 'table', label: 'Table' }, ...inspectorTabs].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        id={`tab-${tab.id}`}
+                        aria-selected={activeTab === tab.id}
+                        aria-controls="inspector-panel"
+                        // Only the selected tab is in the tab order; the arrow
+                        // keys move between them, which is what a tablist is
+                        // supposed to do and what stops five tabs costing five
+                        // presses to get past.
+                        tabIndex={activeTab === tab.id ? 0 : -1}
+                        className={`tab ${activeTab === tab.id ? 'tab--active' : ''}`}
+                        onClick={() => setInspectorTab(tab.id)}
+                        onKeyDown={(event) => moveTab(event, tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
-              </div>
-            </div>
-          )}
+
+                <RouterControls
+                  controls={protocol.routerControls}
+                  routerId={selectedRouter}
+                  neighbors={links
+                    .filter(
+                      (link) =>
+                        link.source === selectedRouter || link.destination === selectedRouter
+                    )
+                    .map((link) =>
+                      link.source === selectedRouter ? link.destination : link.source
+                    )}
+                  values={snapshot.routerOptions}
+                  onChange={updateRouterOption}
+                />
+
+                <div
+                  id="inspector-panel"
+                  role="tabpanel"
+                  aria-labelledby={`tab-${activeTab}`}
+                >
+                  {activeTab === 'table' ? (
+                    <RoutingTable
+                      table={selectedTable}
+                      columns={protocol.columns}
+                      rowLabel={protocol.rowLabel}
+                      correctness={selectedCorrectness}
+                      hasRoutingTables={protocol.hasRoutingTables}
+                      infinityCost={infinityCost}
+                    />
+                  ) : (
+                    <InspectorBlocks
+                      blocks={activeTabData && activeTabData.blocks}
+                      infinityCost={infinityCost}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+          </CollapsibleSection>
         </div>
       </div>
-      {/* Help Button */}
-      <div
-        onClick={() => setShowHelpModal(true)}
+
+      <button
+        type="button"
         className="help-button"
+        onClick={() => setShowHelp(true)}
+        title="Help"
+        aria-label="Open help"
       >
         ?
-      </div>
+      </button>
     </div>
   );
 }

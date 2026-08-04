@@ -1,4 +1,10 @@
-/* Color variables for consistent theming */
+/*
+ * App.css
+ *
+ * The custom properties below are fallbacks. config.js is the source of truth
+ * for the palette and overwrites them at startup via applyTheme(), so the DOM
+ * and the WebGL scene can never disagree about a colour.
+ */
 :root {
   --primary: #2196f3;
   --primary-dark: #1976d2;
@@ -12,9 +18,11 @@
   --background-light: #f9f9f9;
   --background-white: #ffffff;
   --border-color: #e0e0e0;
+
   --shadow-light: 0 2px 5px rgba(0, 0, 0, 0.1);
   --shadow-medium: 0 4px 8px rgba(0, 0, 0, 0.15);
   --border-radius: 8px;
+  --panel-width: 320px;
 }
 
 body {
@@ -28,7 +36,9 @@ body {
 .App {
   text-align: center;
   height: 100vh;
-  width: 100vw;
+  /* 100vw would include the scrollbar gutter and force 8px of horizontal
+     overflow as soon as a vertical scrollbar appears. */
+  width: 100%;
   overflow: hidden;
 }
 
@@ -39,10 +49,12 @@ body {
   background: linear-gradient(to bottom right, #f5f7fa, #e4e8ef);
 }
 
-/* Panel styles */
+/* ---------------- panels ---------------- */
+
 .left-panel,
 .right-panel {
-  width: 320px;
+  width: var(--panel-width);
+  flex: 0 0 var(--panel-width);
   background-color: var(--background-white);
   padding: 20px;
   overflow-y: auto;
@@ -56,15 +68,11 @@ body {
   border-left: 1px solid var(--border-color);
 }
 
-/* Visualization container */
 .visualization-container {
   flex: 1;
+  min-width: 0;
   position: relative;
-  background-color: var(--background-white);
   background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ef 100%);
-  display: flex;
-  justify-content: center;
-  align-items: center;
   box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.05);
 }
 
@@ -74,15 +82,14 @@ body {
   position: relative;
 }
 
-/* Control sections */
 .control-section {
   background-color: var(--background-white);
-  padding: 20px;
-  margin-bottom: 24px;
+  padding: 18px;
+  margin-bottom: 22px;
   border-radius: var(--border-radius);
   box-shadow: var(--shadow-light);
   border: 1px solid var(--border-color);
-  transition: all 0.3s ease;
+  transition: box-shadow 0.3s ease;
 }
 
 .control-section:hover {
@@ -90,10 +97,9 @@ body {
 }
 
 .control-section h2 {
-  margin-top: 0;
-  margin-bottom: 18px;
+  margin: 0 0 18px;
   color: var(--primary-dark);
-  font-size: 1.2em;
+  font-size: 1.1em;
   text-align: center;
   font-weight: 600;
   position: relative;
@@ -101,7 +107,7 @@ body {
 }
 
 .control-section h2:after {
-  content: "";
+  content: '';
   position: absolute;
   bottom: 0;
   left: 50%;
@@ -112,65 +118,107 @@ body {
   border-radius: 3px;
 }
 
-/* Form groups */
+/* ---------------- forms ---------------- */
+
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   display: flex;
   align-items: center;
 }
 
 .form-group label {
-  width: 100px;
+  width: 96px;
+  flex: 0 0 96px;
   text-align: right;
-  margin-right: 15px;
+  margin-right: 12px;
   color: var(--text-secondary);
   font-weight: 500;
-  font-size: 0.95em;
+  font-size: 0.9em;
 }
 
 .form-group input,
 .form-group select {
   flex: 1;
-  padding: 10px 12px;
+  min-width: 0;
+  padding: 9px 11px;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
   font-family: inherit;
-  font-size: 0.95em;
-  transition: all 0.2s;
+  font-size: 0.92em;
+  transition: border-color 0.2s, box-shadow 0.2s;
   background-color: #f8f9fa;
+  color: var(--text-primary);
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+button:focus-visible {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.25);
 }
 
-/* Buttons */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 0.92em;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.checkbox-row input:disabled + span {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.hint,
+.empty-note {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  text-align: left;
+  margin: 10px 0 0;
+}
+
+.empty-note {
+  text-align: center;
+  font-style: italic;
+}
+
+/* ---------------- buttons ---------------- */
+
 button {
   width: 100%;
-  padding: 12px;
+  padding: 11px;
   background-color: var(--primary);
   color: white;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--border-radius);
   cursor: pointer;
-  margin-top: 12px;
-  transition: all 0.2s;
+  margin-top: 10px;
+  transition: background-color 0.2s, box-shadow 0.2s, transform 0.1s;
+  font-family: inherit;
   font-weight: 500;
-  font-size: 0.95em;
+  font-size: 0.92em;
   letter-spacing: 0.3px;
   box-shadow: 0 2px 4px rgba(33, 150, 243, 0.25);
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background-color: var(--primary-dark);
   box-shadow: 0 4px 8px rgba(33, 150, 243, 0.35);
   transform: translateY(-1px);
 }
 
-button:active {
+button:active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: 0 1px 2px rgba(33, 150, 243, 0.2);
 }
@@ -182,95 +230,881 @@ button:disabled {
   transform: none;
 }
 
-/* Iteration display */
+button.secondary {
+  background-color: var(--background-white);
+  color: var(--primary-dark);
+  border-color: var(--primary);
+  box-shadow: none;
+}
+
+button.secondary:hover:not(:disabled) {
+  background-color: var(--primary-light);
+  box-shadow: none;
+}
+
+button.ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+  box-shadow: none;
+}
+
+button.ghost:hover:not(:disabled) {
+  background-color: #f1f1f1;
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+/* ---------------- entity lists ---------------- */
+
+.entity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.entity-row:last-child {
+  border-bottom: none;
+}
+
+.entity-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip {
+  width: auto;
+  margin: 0;
+  flex: 1;
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 0.88em;
+  background-color: #f3f6fa;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+.chip:hover:not(:disabled) {
+  background-color: var(--primary-light);
+  color: var(--primary-dark);
+  box-shadow: none;
+  transform: none;
+}
+
+.chip--active {
+  background-color: var(--primary);
+  color: white;
+  border-color: var(--primary-dark);
+}
+
+.chip--active:hover:not(:disabled) {
+  background-color: var(--primary-dark);
+  color: white;
+}
+
+.chip--static {
+  cursor: default;
+}
+
+.icon {
+  width: auto;
+  min-width: 40px;
+  margin: 0;
+  padding: 6px 9px;
+  font-size: 0.78em;
+  background-color: #eceff1;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+.icon:hover:not(:disabled) {
+  background-color: #dfe4e8;
+  color: var(--text-primary);
+  box-shadow: none;
+  transform: none;
+}
+
+.icon--danger:hover:not(:disabled) {
+  background-color: var(--error);
+  color: white;
+  border-color: var(--error);
+}
+
+.icon--warn {
+  background-color: var(--warning);
+  color: white;
+  border-color: var(--warning);
+}
+
+.icon--warn:hover:not(:disabled) {
+  background-color: #f57c00;
+  color: white;
+}
+
+.cost-input {
+  width: 56px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.85em;
+  background-color: #f8f9fa;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+/* ---------------- iteration readout ---------------- */
+
 .iteration-display {
   position: absolute;
   top: 20px;
   right: 20px;
+  max-width: 340px;
   background-color: rgba(255, 255, 255, 0.95);
-  padding: 15px 20px;
+  padding: 13px 18px;
   border-radius: var(--border-radius);
   box-shadow: var(--shadow-medium);
-  z-index: 1000;
+  z-index: 100;
   border: 1px solid var(--primary-light);
+  text-align: left;
 }
 
 .iteration-counter {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: bold;
   color: var(--primary);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 
-.iteration-status {
-  font-size: 14px;
+/* ---------------- correctness overlay ---------------- */
+
+.correctness-meter {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.correctness-meter--success {
+  background-color: rgba(76, 175, 80, 0.14);
+  color: #2e7d32;
+}
+
+.correctness-meter--warning {
+  background-color: rgba(255, 152, 0, 0.18);
+  color: #e65100;
+}
+
+.sparkline {
+  display: block;
+  margin: 0 0 6px;
+}
+
+/* ---------------- the virtual clock ---------------- */
+
+.clock-readout {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+
+/* The round counter is still true in timer mode — it is zero — so it stays,
+   quietly, rather than vanishing and leaving the user unsure which clock the
+   number in front of them belongs to. */
+.iteration-counter__aside {
+  font-size: 0.72em;
+  font-weight: 500;
   color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/*
+ * The event log. Monospaced timestamps in a fixed column, because the whole
+ * point of reading it is spotting that two things happened 180 seconds apart.
+ */
+.event-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.event-log li {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.78em;
   line-height: 1.4;
 }
 
-/* Path result */
-.path-result {
-  margin-top: 16px;
-  padding: 15px;
-  background-color: var(--primary-light);
-  border-radius: var(--border-radius);
-  border-left: 4px solid var(--primary);
+.event-log li:last-child {
+  border-bottom: none;
 }
 
-.path-result p {
-  margin: 5px 0;
+.event-log__time {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary-dark);
+}
+
+.event-log__text {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.correctness-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.correctness-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.score-chip {
+  min-width: 34px;
+  padding: 3px 7px;
+  border-radius: 10px;
+  font-size: 0.74em;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.score-chip--ok {
+  background-color: rgba(76, 175, 80, 0.16);
+  color: #2e7d32;
+  border-color: rgba(76, 175, 80, 0.4);
+}
+
+.score-chip--bad {
+  background-color: rgba(255, 152, 0, 0.18);
+  color: #e65100;
+  border-color: rgba(255, 152, 0, 0.45);
+}
+
+.score-chip--absent {
+  color: var(--text-secondary);
+  background-color: transparent;
+  border-color: var(--border-color);
+}
+
+/* ---------------- stats ---------------- */
+
+.stats-panel {
+  text-align: left;
+}
+
+.stat-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.85em;
+}
+
+.stat-row:last-of-type {
+  border-bottom: none;
+}
+
+.stat-row__label {
+  color: var(--text-secondary);
+}
+
+.stat-row__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
 
-/* Routing table */
+.stat-row--kinds .stat-row__value {
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.92em;
+  letter-spacing: 0.4px;
+}
+
+/* ---------------- router inspector ---------------- */
+
+/*
+ * The inspector grows a tab per protocol (LSDB, timers), so the strip has to
+ * survive more entries than fit on one line rather than pushing the panel wide.
+ */
+.tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Scoped under .tab-strip so these beat the global `button:hover` rule, which
+   would otherwise turn a hovered tab into a solid primary button. */
+.tab-strip .tab {
+  width: auto;
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tab-strip .tab:hover:not(:disabled) {
+  background: none;
+  box-shadow: none;
+  color: var(--primary-dark);
+  transform: none;
+}
+
+.tab-strip .tab--active {
+  color: var(--primary-dark);
+  border-bottom-color: var(--primary);
+}
+
+/*
+ * The Rounds / Timers switch reuses the inspector's tab strip: it is the same
+ * gesture — one of these views at a time — and giving it its own control would
+ * be a second vocabulary for the same idea.
+ */
+.tab-strip--modes {
+  margin: 0 0 14px;
+}
+
+.router-controls {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background-color: var(--background-light);
+  border-radius: var(--border-radius);
+  border-left: 3px solid var(--primary);
+}
+
+/* Progress bars, for anything that counts down: LSA age, route timeout, GC. */
+.bar-list {
+  margin-top: 12px;
+  text-align: left;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 0.82em;
+}
+
+.bar-row__label {
+  color: var(--text-secondary);
+}
+
+.bar-row__track {
+  height: 7px;
+  border-radius: 4px;
+  background-color: var(--border-color);
+  overflow: hidden;
+}
+
+.bar-row__fill {
+  display: block;
+  height: 100%;
+  background-color: var(--primary);
+}
+
+.bar-row__caption {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ---------------- collapsible sections ---------------- */
+
+.control-section--collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+
+.control-section--collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The triangle is drawn by hand so it can sit inside the centred heading
+   rule rather than fighting the default marker's baseline. */
+.control-section--collapsible > summary::after {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--primary);
+  border-bottom: 2px solid var(--primary);
+  transform: rotate(45deg);
+  transition: transform 0.2s;
+}
+
+.control-section--collapsible[open] > summary::after {
+  transform: rotate(-135deg);
+  top: 9px;
+}
+
+.control-section--collapsible > summary > h2 {
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.control-section--collapsible[open] > summary > h2 {
+  margin-bottom: 18px;
+}
+
+.badge {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.badge--success {
+  background-color: var(--success);
+  color: white;
+}
+
+.iteration-status {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.iteration-status--warning {
+  color: #e65100;
+}
+
+.iteration-status--success {
+  color: #2e7d32;
+}
+
+.legend {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 9px 14px;
+  background-color: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-light);
+  font-size: 12px;
+  color: var(--text-secondary);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+/* Swatch colours come from COLORS via inline styles: the legend is generated
+   from the active protocol, so hard-coding a class per entry would need a new
+   rule for every protocol added. */
+
+/* ---------------- path result ---------------- */
+
+.path-result {
+  margin-top: 14px;
+  padding: 13px;
+  background-color: #f2f8ff;
+  border-radius: var(--border-radius);
+  border-left: 4px solid var(--primary);
+  text-align: left;
+}
+
+.path-result p {
+  margin: 6px 0;
+  font-size: 0.86em;
+  color: var(--text-primary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.path-result__warning {
+  color: #e65100;
+  font-weight: 500;
+}
+
+/* ---------------- routing table ---------------- */
+
 .routing-table {
-  margin-top: 16px;
-  max-height: 300px;
+  margin-top: 14px;
+  max-height: 340px;
   overflow-y: auto;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
 }
 
 .routing-entry {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border-color);
-  font-size: 0.9em;
+  font-size: 0.85em;
   background-color: var(--background-white);
   transition: background-color 0.2s;
 }
 
-.routing-entry:hover {
-  background-color: #f0f7ff;
+/* A grid item will not shrink below its content by default, so a long AS path
+   ("2 → 3 → 4 → 5") would push the table wider than the panel instead of
+   wrapping inside its own column. Values may break anywhere; headings are
+   words, and are left to hyphenate instead (see below). */
+.routing-entry > span {
+  min-width: 0;
+}
+
+.routing-entry:not(.routing-entry--head) > span {
+  overflow-wrap: anywhere;
 }
 
 .routing-entry:last-child {
   border-bottom: none;
 }
 
-.routing-entry span {
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background-color: #f3f3f3;
+.routing-entry:hover {
+  background-color: #f0f7ff;
 }
 
-/* Status messages */
-.status {
-  margin: 16px 0;
-  padding: 12px 16px;
-  border-radius: var(--border-radius);
+.routing-entry--head {
+  position: sticky;
+  top: 0;
   background-color: var(--primary-light);
+  color: var(--primary-dark);
+  font-weight: 600;
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.routing-entry--head:hover {
+  background-color: var(--primary-light);
+}
+
+.routing-entry--unreachable {
+  color: var(--text-secondary);
+  background-color: #fbfbfb;
+}
+
+/* ---------------- modals ---------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  backdrop-filter: blur(3px);
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.modal-content {
+  background-color: white;
+  padding: 30px;
+  border-radius: var(--border-radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  text-align: center;
+  max-width: 460px;
+  animation: fadeIn 0.25s ease-out;
+  border: 1px solid var(--border-color);
+}
+
+.modal-content h2 {
+  color: var(--primary-dark);
+  margin-top: 0;
+  font-size: 1.7em;
+  font-weight: 600;
+}
+
+.modal-content p {
+  margin: 18px 0;
+  font-size: 1em;
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+.modal-content--success h2 {
+  color: var(--success);
+}
+
+.modal-content--success button {
+  background-color: var(--success);
+  box-shadow: 0 2px 5px rgba(76, 175, 80, 0.3);
+}
+
+.modal-content--success button:hover:not(:disabled) {
+  background-color: #388e3c;
+}
+
+.modal-content--help {
+  max-width: 680px;
+  max-height: 84vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.modal-content--help h3 {
+  color: var(--primary-dark);
+  margin: 22px 0 8px;
+  font-size: 1.05em;
+}
+
+.modal-content--help ul,
+.modal-content--help ol {
+  padding-left: 22px;
+  margin: 0;
+}
+
+.modal-content--help li {
+  margin-bottom: 7px;
+  line-height: 1.55;
+  font-size: 0.94em;
+}
+
+.modal-content--help code {
+  display: inline-block;
+  background-color: #eef2f7;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.88em;
   color: var(--primary-dark);
 }
 
-.status.warning {
-  background-color: #fff3e0;
-  color: var(--warning);
+.modal-content--help button {
+  margin-top: 24px;
 }
 
-/* Custom scrollbar for better UX */
+/* ---------------- protocol comparison ---------------- */
+
+.modal-content--comparison {
+  max-width: 900px;
+  max-height: 88vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.modal-content--comparison button {
+  margin-top: 22px;
+}
+
+/* Six columns will not fit every window, and the modal itself must never scroll
+   sideways — so the table scrolls inside its own box instead. */
+.comparison-scroll {
+  margin-top: 18px;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+/* Below the table rather than above it: the reader wants the numbers first and
+   the "which topology was this?" second, and a screenshot keeps both. */
+.comparison-table caption {
+  caption-side: bottom;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--background-light);
+  color: var(--text-secondary);
+  font-size: 0.92em;
+  text-align: left;
+}
+
+.comparison-table th,
+.comparison-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: right;
+  /* Same width for every digit, so a column can be scanned rather than read. */
+  font-variant-numeric: tabular-nums;
+}
+
+.comparison-table thead th {
+  background-color: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 0.86em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  vertical-align: bottom;
+}
+
+.comparison-table tbody th,
+.comparison-table thead th:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.comparison-table tbody tr:last-child th,
+.comparison-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.comparison-table tbody tr:hover {
+  background-color: #f0f7ff;
+}
+
+/* The option set a variant row was run under, under the protocol's own name:
+   two rows for one protocol have to be told apart at a glance. */
+.comparison-note {
+  display: block;
+  font-weight: 400;
+  font-size: 0.88em;
+  color: var(--text-secondary);
+}
+
+.comparison-cell--muted {
+  color: var(--text-secondary);
+}
+
+.comparison-row--stalled td,
+.comparison-row--stalled th {
+  background-color: rgba(255, 152, 0, 0.12);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------------- help button ---------------- */
+
+.help-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 24px;
+  font-weight: bold;
+  box-shadow: 0 4px 10px rgba(33, 150, 243, 0.4);
+  z-index: 900;
+}
+
+.help-button:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: 0 6px 15px rgba(33, 150, 243, 0.5);
+}
+
+/* ---------------- range input ---------------- */
+
+.animation-speed-value {
+  margin-left: 12px;
+  min-width: 42px;
+  background-color: var(--primary-light);
+  padding: 3px 9px;
+  border-radius: 20px;
+  color: var(--primary-dark);
+  font-weight: bold;
+  font-size: 0.85em;
+  text-align: center;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 5px;
+  background: #ddd;
+  outline: none;
+  padding: 0;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
+}
+
+/* ---------------- scrollbars ---------------- */
+
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -289,289 +1123,87 @@ button:disabled {
   background: #a8a8a8;
 }
 
-/* Form field spacing */
-.form-group span {
-  margin-left: 12px;
-  color: var(--text-secondary);
-}
+/* ---------------- responsive ---------------- */
 
-/* Range input styling */
-input[type="range"] {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 5px;
-  border-radius: 5px;
-  background: #ddd;
-  outline: none;
-  margin: 0 10px;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--primary);
-  cursor: pointer;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
-}
-
-input[type="range"]::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--primary);
-  cursor: pointer;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
-}
-
-/* Animation for update packets */
-@keyframes pulse {
-  0% {
-    transform: scale(1);
-    opacity: 0.9;
-    box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.7);
-  }
-
-  50% {
-    transform: scale(1.2);
-    opacity: 1;
-    box-shadow: 0 0 0 10px rgba(33, 150, 243, 0);
-  }
-
-  100% {
-    transform: scale(1);
-    opacity: 0.9;
-    box-shadow: 0 0 0 0 rgba(33, 150, 243, 0);
+@media (max-width: 1180px) {
+  :root {
+    --panel-width: 270px;
   }
 }
 
-.iteration-overlay {
-  background-color: rgba(255, 255, 255, 0.9);
-  padding: 10px 16px;
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-light);
-  font-weight: bold;
-  color: var(--primary);
-  font-size: 16px;
-  pointer-events: none;
-  border: 1px solid var(--primary-light);
-}
-
-/* Modal styles for convergence notification */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-  backdrop-filter: blur(3px);
-}
-
-.modal-content {
-  background-color: white;
-  padding: 35px;
-  border-radius: var(--border-radius);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-  text-align: center;
-  max-width: 450px;
-  animation: fadeIn 0.3s ease-out;
-  border: 1px solid var(--border-color);
-}
-
-.modal-content h2 {
-  color: var(--success);
-  margin-top: 0;
-  font-size: 2em;
-  font-weight: 600;
-}
-
-.modal-content p {
-  margin: 24px 0;
-  font-size: 1.2em;
-  color: var(--text-primary);
-  line-height: 1.5;
-}
-
-.modal-content button {
-  background-color: var(--success);
-  color: white;
-  padding: 12px 30px;
-  border: none;
-  border-radius: var(--border-radius);
-  font-size: 1em;
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-top: 12px;
-  box-shadow: 0 2px 5px rgba(76, 175, 80, 0.3);
-}
-
-.modal-content button:hover {
-  background-color: #388e3c;
-  box-shadow: 0 4px 8px rgba(76, 175, 80, 0.4);
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Add a help button */
-.help-button {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  background-color: var(--primary);
-  color: white;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 24px;
-  font-weight: bold;
-  box-shadow: 0 4px 10px rgba(33, 150, 243, 0.4);
-  cursor: pointer;
-  z-index: 900;
-  transition: all 0.3s;
-}
-
-.help-button:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 15px rgba(33, 150, 243, 0.5);
-}
-
-/* Animation Control styling */
-.animation-speed-container {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
-}
-
-.animation-speed-value {
-  background-color: var(--primary-light);
-  padding: 4px 10px;
-  border-radius: 20px;
-  color: var(--primary-dark);
-  font-weight: bold;
-  min-width: 30px;
-  text-align: center;
-}
-
-/* Responsive Styles for Tablets and Mobile Devices */
 @media (max-width: 1024px) {
+  .App {
+    height: auto;
+    overflow-y: auto;
+  }
+
   .app-container {
     flex-direction: column;
-    overflow-y: auto;
     height: auto;
   }
 
   .left-panel,
   .right-panel {
     width: 100%;
-    max-width: 100%;
+    flex: none;
     border: none;
+    border-top: 1px solid var(--border-color);
     padding: 15px;
   }
 
   .visualization-container {
-    height: 70vh;
-    min-height: 400px;
+    order: -1;
+    /* `flex: none` is required: the base rule's `flex: 1` implies
+       flex-basis: 0, which wins over `height` in a column flex container and
+       would collapse the canvas to its min-height. */
+    flex: none;
+    height: 65vh;
+    min-height: 380px;
   }
 
   .iteration-display {
-    width: 90%;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
+    left: 10px;
+    right: 10px;
+    max-width: none;
     top: 10px;
   }
 
-  .control-section {
-    padding: 15px;
-    margin-bottom: 20px;
-  }
-
-  .help-button {
-    bottom: 15px;
-    right: 15px;
-    width: 50px;
-    height: 50px;
-    font-size: 20px;
+  .legend {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    justify-content: center;
   }
 }
 
 @media (max-width: 768px) {
-  .App {
-    height: auto;
-    overflow-y: auto;
-  }
-
   .form-group {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .form-group label {
-    width: 100%;
-    text-align: left;
-    margin-bottom: 5px;
-    margin-right: 0;
-  }
-
-  .form-group input,
-  .form-group select {
-    width: 100%;
-  }
-
-  button {
-    font-size: 14px;
-    padding: 10px;
-  }
-
-  .routing-entry {
-    flex-direction: column;
-    padding: 10px;
-  }
-
-  .routing-entry span {
-    margin-bottom: 5px;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .modal-content {
-    width: 90%;
-    max-width: none;
-    padding: 20px;
-  }
-
-  .animation-speed-container {
     flex-direction: column;
     align-items: stretch;
   }
 
+  .form-group label {
+    width: 100%;
+    flex: none;
+    text-align: left;
+    margin: 0 0 5px;
+  }
+
   .animation-speed-value {
-    margin-top: 10px;
+    margin: 8px 0 0;
+  }
+
+  .modal-content {
+    padding: 20px;
   }
 }
 
 @media (max-width: 480px) {
+  .control-section {
+    padding: 12px;
+    margin-bottom: 15px;
+  }
+
   .control-section h2 {
     font-size: 1em;
   }
@@ -584,21 +1216,12 @@ input[type="range"]::-moz-range-thumb {
     font-size: 12px;
   }
 
-  input[type="range"] {
-    width: 100%;
-    margin: 10px 0;
-  }
-
-  .control-section {
-    padding: 12px;
-    margin-bottom: 15px;
+  .legend {
+    font-size: 11px;
+    gap: 9px;
   }
 
   .modal-content h2 {
-    font-size: 1.5em;
-  }
-
-  .modal-content p {
-    font-size: 1em;
+    font-size: 1.35em;
   }
 }

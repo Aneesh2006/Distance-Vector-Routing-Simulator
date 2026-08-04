@@ -1,601 +1,719 @@
-import React, { useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { Text, OrbitControls, Html } from '@react-three/drei';
+/**
+ * Network3D.js — the WebGL view of the network.
+ *
+ * Two rules keep this cheap:
+ *   1. Geometry is memoised and only rebuilt when its endpoints move, so the
+ *      renderer never allocates (and leaks) a mesh per frame.
+ *   2. Anything that moves every frame is driven from `useFrame` by mutating
+ *      object transforms directly. Nothing here calls setState per frame.
+ */
+
+import React, { useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import { Billboard, OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
+import {
+  COLORS,
+  CORRECTNESS_STYLES,
+  LINK_DECORATIONS,
+  ROUTER_DECORATIONS,
+  ROUTE_ACCENTS,
+  SCENE,
+  messageStyle,
+} from './config';
+import { compareIds, formatCell } from './DvrAlgorithm';
 
-function Router({ position, id, isSelected, onClick, routingTable, allRouters }) {
-    const meshRef = useRef();
-    const [hovered, setHovered] = useState(false);
+const UP = new THREE.Vector3(0, 1, 0);
 
-    // Function to determine the best position for the routing table
-    const getTablePosition = () => {
-        if (!allRouters || Object.keys(allRouters).length === 0) {
-            return [3.5, 0, 0]; // Default position if no router data
-        }
+/** Order-independent key for the edge between two routers. */
+const edgeKey = (a, b) => [a, b].sort(compareIds).join('|');
 
-        // Possible positions to check (right, left, top, bottom, front, back)
-        const possiblePositions = [
-            [4, 0, 0],    // right
-            [-4, 0, 0],   // left
-            [0, 4, 0],    // top
-            [0, -4, 0],   // bottom
-            [0, 0, 4],    // front
-            [0, 0, -4]    // back
-        ];
-
-        // Current router position as Vector3
-        const routerPos = new THREE.Vector3(position[0], position[1], position[2]);
-
-        // Find the best position with maximum distance to other routers
-        let bestPosition = possiblePositions[0];
-        let maxMinDistance = 0;
-
-        possiblePositions.forEach(pos => {
-            const tablePos = new THREE.Vector3(
-                routerPos.x + pos[0],
-                routerPos.y + pos[1],
-                routerPos.z + pos[2]
-            );
-
-            // Calculate minimum distance to all other routers
-            let minDistance = Infinity;
-            Object.entries(allRouters).forEach(([routerId, router]) => {
-                if (routerId !== id) { // Skip the current router
-                    const otherPos = new THREE.Vector3(router.x, router.y, router.z);
-                    const distance = tablePos.distanceTo(otherPos);
-                    minDistance = Math.min(minDistance, distance);
-                }
-            });
-
-            // Update best position if this one has a larger minimum distance
-            if (minDistance > maxMinDistance) {
-                maxMinDistance = minDistance;
-                bestPosition = pos;
-            }
-        });
-
-        return bestPosition;
-    };
-
-    // Get the best position for the table
-    const tablePosition = getTablePosition();
-
-    return (
-        <group position={position}>
-            <mesh
-                ref={meshRef}
-                onClick={onClick}
-                onPointerOver={() => setHovered(true)}
-                onPointerOut={() => setHovered(false)}
-            >
-                <boxGeometry args={[1, 1, 1]} />
-                <meshStandardMaterial
-                    color={hovered ? '#1976D2' : '#B3E5FC'}
-                    metalness={0.1}
-                    roughness={0.6}
-                    transparent={true}
-                    opacity={0.8}
-                />
-            </mesh>
-
-            {/* Front */}
-            <Text
-                position={[0, 0, 0.51]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-            >
-                {id}
-            </Text>
-
-            {/* Back */}
-            <Text
-                position={[0, 0, -0.51]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-                rotation={[0, Math.PI, 0]}
-            >
-                {id}
-            </Text>
-
-            {/* Left */}
-            <Text
-                position={[-0.51, 0, 0]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-                rotation={[0, -Math.PI / 2, 0]}
-            >
-                {id}
-            </Text>
-
-            {/* Right */}
-            <Text
-                position={[0.51, 0, 0]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-                rotation={[0, Math.PI / 2, 0]}
-            >
-                {id}
-            </Text>
-
-            {/* Top */}
-            <Text
-                position={[0, 0.51, 0]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-                rotation={[-Math.PI / 2, 0, 0]}
-            >
-                {id}
-            </Text>
-
-            {/* Bottom */}
-            <Text
-                position={[0, -0.51, 0]}
-                fontSize={0.4}
-                color="#000000"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.02}
-                outlineColor="#ffffff"
-                rotation={[Math.PI / 2, 0, 0]}
-            >
-                {id}
-            </Text>
-
-            {isSelected && routingTable && (
-                <group position={tablePosition}>
-                    <mesh>
-                        <planeGeometry args={[5, 4]} />
-                        <meshStandardMaterial color="#1976D2" />
-                    </mesh>
-
-                    {/* Title */}
-                    <Text
-                        position={[0, 1.7, 0.1]}
-                        fontSize={0.3}
-                        color="#ffffff"
-                        anchorX="center"
-                        anchorY="top"
-                        fontWeight="bold"
-                    >
-                        Router {id} Routing Table
-                    </Text>
-
-                    {/* Column Headers */}
-                    <Text
-                        position={[-1.8, 1.2, 0.1]}
-                        fontSize={0.25}
-                        color="#ffffff"
-                        anchorX="center"
-                        anchorY="top"
-                    >
-                        Router
-                    </Text>
-                    <Text
-                        position={[-0.6, 1.2, 0.1]}
-                        fontSize={0.25}
-                        color="#ffffff"
-                        anchorX="center"
-                        anchorY="top"
-                    >
-                        Distance
-                    </Text>
-                    <Text
-                        position={[0.6, 1.2, 0.1]}
-                        fontSize={0.25}
-                        color="#ffffff"
-                        anchorX="center"
-                        anchorY="top"
-                    >
-                        Next Hop
-                    </Text>
-
-                    {/* Data Rows */}
-                    {Object.entries(routingTable).map(([dest, info], index) => (
-                        <group key={dest}>
-                            <Text
-                                position={[-1.8, 0.8 - index * 0.3, 0.1]}
-                                fontSize={0.22}
-                                color="#ffffff"
-                                anchorX="center"
-                                anchorY="top"
-                            >
-                                {dest}
-                            </Text>
-                            <Text
-                                position={[-0.6, 0.8 - index * 0.3, 0.1]}
-                                fontSize={0.22}
-                                color="#ffffff"
-                                anchorX="center"
-                                anchorY="top"
-                            >
-                                {info.cost === Infinity ? "∞" : info.cost}
-                            </Text>
-                            <Text
-                                position={[0.6, 0.8 - index * 0.3, 0.1]}
-                                fontSize={0.22}
-                                color="#ffffff"
-                                anchorX="center"
-                                anchorY="top"
-                            >
-                                {info.nextHop}
-                            </Text>
-                        </group>
-                    ))}
-                </group>
-            )}
-        </group>
-    );
+/** Position, orientation and length of the segment between two points. */
+function useSegment(sx, sy, sz, tx, ty, tz) {
+  return useMemo(() => {
+    const start = new THREE.Vector3(sx, sy, sz);
+    const end = new THREE.Vector3(tx, ty, tz);
+    const direction = new THREE.Vector3().subVectors(end, start);
+    const length = direction.length();
+    const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+    const quaternion = new THREE.Quaternion();
+    if (length > SCENE.link.minLength) {
+      quaternion.setFromUnitVectors(UP, direction.clone().divideScalar(length));
+    }
+    return { start, end, midpoint, quaternion, length };
+  }, [sx, sy, sz, tx, ty, tz]);
 }
 
-function Link({ source, target, cost, isPathHighlighted }) {
-    // Create a curve for the link
-    const points = [];
-    const numPoints = 20;
-    const linkRef = useRef();
-    const [hovered, setHovered] = useState(false);
+/* ------------------------------------------------------------------ *
+ * Routing table panel
+ * ------------------------------------------------------------------ */
 
-    // Calculate the start and end points
-    const startX = source[0];
-    const startY = source[1];
-    const startZ = source[2];
-    const endX = target[0];
-    const endY = target[1];
-    const endZ = target[2];
+function RoutingTablePanel({
+  routerId,
+  table,
+  columns,
+  rowLabel,
+  correctness,
+  infinityCost,
+  offset,
+}) {
+  const rows = useMemo(
+    () => Object.entries(table || {}).sort(([a], [b]) => compareIds(a, b)),
+    [table]
+  );
+  const { rowHeight, headerHeight, footerPadding, columnWidth, minColumns, rowTintInset } =
+    SCENE.table;
 
-    // Create points along the line
-    for (let i = 0; i < numPoints; i++) {
-        const t = i / (numPoints - 1);
-        const x = startX + t * (endX - startX);
-        const y = startY + t * (endY - startY);
-        const z = startZ + t * (endZ - startZ);
-        points.push(new THREE.Vector3(x, y, z));
-    }
+  // The row's own key is always the first column; the protocol supplies the
+  // rest, and names the first one when it is not a destination.
+  const allColumns = useMemo(
+    () => [{ key: null, label: rowLabel || 'Destination', format: 'text' }, ...(columns || [])],
+    [columns, rowLabel]
+  );
+  const width = columnWidth * Math.max(minColumns, allColumns.length);
+  const columnX = (index) => -width / 2 + columnWidth * (index + 0.5);
 
-    const curve = new THREE.CatmullRomCurve3(points);
-    const tubeGeometry = new THREE.TubeGeometry(curve, 64, 0.05, 8, false);
+  const height = headerHeight + rows.length * rowHeight + footerPadding;
+  const top = height / 2;
+  /** Baseline of row `index`; the text hangs down from here. */
+  const rowY = (index) => top - headerHeight - index * rowHeight;
 
-    // Use useFrame to create a subtle animation effect on the link
-    useFrame(({ clock }) => {
-        if (linkRef.current) {
-            if (isPathHighlighted) {
-                // Strong glowing effect for highlighted path
-                const glowPulse = Math.sin(clock.getElapsedTime() * 4) * 0.2 + 0.8;
-                linkRef.current.material.opacity = 0.9;
-                linkRef.current.material.emissiveIntensity = glowPulse * 0.8;
-            } else {
-                // Subtle pulsating effect for regular links
-                const pulse = Math.sin(clock.getElapsedTime() * 2) * 0.1 + 0.9;
-                linkRef.current.material.opacity = hovered ? 0.9 : (0.6 + Math.sin(clock.getElapsedTime()) * 0.1);
-                linkRef.current.material.emissiveIntensity = hovered ? 0.3 : 0.1;
-            }
-        }
+  return (
+    <Billboard position={offset}>
+      <mesh>
+        <planeGeometry args={[width, height]} />
+        <meshBasicMaterial
+          color={COLORS.panelSurface}
+          transparent
+          opacity={SCENE.table.surfaceOpacity}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      <Text
+        position={[0, top - 0.32, 0.02]}
+        fontSize={SCENE.table.titleSize}
+        color={COLORS.panelText}
+        anchorX="center"
+        anchorY="top"
+      >
+        {`Router ${routerId}`}
+      </Text>
+
+      {/* Keyed by position: two columns may legitimately read the same field. */}
+      {allColumns.map((column, index) => (
+        <Text
+          key={index}
+          position={[columnX(index), top - 0.78, 0.02]}
+          fontSize={SCENE.table.headerSize}
+          color={COLORS.panelMuted}
+          anchorX="center"
+          anchorY="top"
+        >
+          {column.label}
+        </Text>
+      ))}
+
+      {/* Correctness tints sit between the panel surface and the text, so a
+          wrong row reads at a glance without the numbers losing contrast. */}
+      {rows.map(([destination], index) => {
+        const style = CORRECTNESS_STYLES[correctness && correctness[destination]];
+        if (!style || !style.sceneTint) return null;
+        return (
+          <mesh
+            key={`tint-${destination}`}
+            position={[0, rowY(index) - SCENE.table.rowSize / 2, 0.01]}
+          >
+            <planeGeometry args={[width - rowTintInset * 2, rowHeight]} />
+            <meshBasicMaterial
+              color={COLORS[style.colorKey]}
+              transparent
+              opacity={style.sceneTint}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* A route the protocol accented — one chosen by policy rather than by
+          length or cost — gets an edge bar rather than a second wash, so it
+          reads on top of whatever the correctness tint is already saying. */}
+      {rows.map(([destination, route], index) => {
+        const accent = ROUTE_ACCENTS[route.accent];
+        if (!accent) return null;
+        return (
+          <mesh
+            key={`accent-${destination}`}
+            position={[
+              -width / 2 + rowTintInset,
+              rowY(index) - SCENE.table.rowSize / 2,
+              0.015,
+            ]}
+          >
+            <planeGeometry args={[SCENE.table.accentWidth, rowHeight]} />
+            <meshBasicMaterial
+              color={COLORS[accent.colorKey]}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        );
+      })}
+
+      {rows.map(([destination, route], index) => {
+        const y = rowY(index);
+        return allColumns.map((column, columnIndex) => (
+          <Text
+            key={`${destination}-${columnIndex}`}
+            position={[columnX(columnIndex), y, 0.02]}
+            fontSize={SCENE.table.rowSize}
+            color={COLORS.panelText}
+            anchorX="center"
+            anchorY="top"
+          >
+            {column.key === null
+              ? destination
+              : formatCell(column.format, route[column.key], infinityCost, route)}
+          </Text>
+        ));
+      })}
+    </Billboard>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Router
+ * ------------------------------------------------------------------ */
+
+function Router({
+  id,
+  position,
+  isSelected,
+  isDown,
+  decoration,
+  onSelect,
+  table,
+  columns,
+  rowLabel,
+  correctness,
+  infinityCost,
+  peers,
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  // Park the table in whichever direction has the most empty space around it.
+  const panelOffset = useMemo(() => {
+    const { offsets, offsetDistance } = SCENE.table;
+    const self = new THREE.Vector3(...position);
+    const others = Object.entries(peers)
+      .filter(([peerId]) => peerId !== id)
+      .map(([, peer]) => new THREE.Vector3(peer.x, peer.y, peer.z));
+
+    let best = offsets[0];
+    let bestClearance = -Infinity;
+    offsets.forEach((offset) => {
+      const candidate = new THREE.Vector3(...offset)
+        .multiplyScalar(offsetDistance)
+        .add(self);
+      const clearance = others.reduce(
+        (min, other) => Math.min(min, candidate.distanceTo(other)),
+        Infinity
+      );
+      if (clearance > bestClearance) {
+        bestClearance = clearance;
+        best = offset;
+      }
     });
+    return new THREE.Vector3(...best).multiplyScalar(offsetDistance).toArray();
+  }, [id, peers, position]);
 
-    // Determine link color based on highlighted status
-    const linkColor = isPathHighlighted ? "#FF3D00" : (hovered ? "#1565C0" : "#2E7D32");
-    const emissiveColor = isPathHighlighted ? "#FF3D00" : (hovered ? "#1565C0" : "#2E7D32");
+  /**
+   * Precedence: down > selected > decoration > hovered > idle.
+   *
+   * Decorations tint, but they never take priority over the two states the
+   * user can act on — a root bridge that is switched off must still read as
+   * off, and one the user just clicked must still read as selected.
+   */
+  const style = ROUTER_DECORATIONS[decoration];
+  let color = COLORS.routerIdle;
+  if (isDown) color = COLORS.routerDown;
+  else if (isSelected) color = COLORS.routerSelected;
+  else if (style) color = COLORS[style.colorKey];
+  else if (hovered) color = COLORS.routerHovered;
 
-    return (
-        <group>
-            <mesh
-                ref={linkRef}
-                onPointerOver={() => setHovered(true)}
-                onPointerOut={() => setHovered(false)}
-            >
-                <primitive object={tubeGeometry} />
-                <meshStandardMaterial
-                    color={linkColor}
-                    transparent={true}
-                    opacity={isPathHighlighted ? 0.9 : 0.8}
-                    emissive={emissiveColor}
-                    emissiveIntensity={isPathHighlighted ? 0.6 : (hovered ? 0.3 : 0.1)}
-                />
-            </mesh>
-            <Text
-                position={[(startX + endX) / 2, (startY + endY) / 2 + 0.3, (startZ + endZ) / 2]}
-                fontSize={0.3}
-                color={isPathHighlighted ? "#FF0000" : "#000000"}
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.03}
-                outlineColor="#ffffff"
-                fillOpacity={0.8}
-            >
-                {cost}
-            </Text>
-        </group>
-    );
+  const label = isDown ? `${id} (down)` : `${id}${style ? style.suffix : ''}`;
+  const { size, labelSize, labelOutline, labelLift, downOpacity, idleOpacity } = SCENE.router;
+
+  return (
+    <group position={position}>
+      <mesh
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect(id);
+        }}
+        onPointerOver={(event) => {
+          event.stopPropagation();
+          setHovered(true);
+        }}
+        onPointerOut={() => setHovered(false)}
+      >
+        <boxGeometry args={[size, size, size]} />
+        <meshStandardMaterial
+          color={color}
+          metalness={0.1}
+          roughness={0.6}
+          transparent
+          opacity={isDown ? downOpacity : idleOpacity}
+        />
+      </mesh>
+
+      {/* One billboarded label beats six meshes glued to the cube faces. */}
+      <Billboard position={[0, labelLift, 0]}>
+        <Text
+          fontSize={labelSize}
+          color={isDown ? COLORS.textSecondary : COLORS.label}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={labelOutline}
+          outlineColor={COLORS.labelOutline}
+        >
+          {label}
+        </Text>
+      </Billboard>
+
+      {isSelected && table && (
+        <RoutingTablePanel
+          routerId={id}
+          table={table}
+          columns={columns}
+          rowLabel={rowLabel}
+          correctness={correctness}
+          infinityCost={infinityCost}
+          offset={panelOffset}
+        />
+      )}
+    </group>
+  );
 }
 
-function Animation({ source, target, progress, type }) {
-    const animMeshRef = useRef();
+/* ------------------------------------------------------------------ *
+ * Link
+ * ------------------------------------------------------------------ */
 
-    // Use the animation progress to move the animation along the link
-    const positionX = source[0] + (target[0] - source[0]) * progress;
-    const positionY = source[1] + (target[1] - source[1]) * progress;
-    const positionZ = source[2] + (target[2] - source[2]) * progress;
+function Link({ sx, sy, sz, tx, ty, tz, cost, decoration, isHighlighted, isDimmed }) {
+  const materialRef = useRef();
+  const [hovered, setHovered] = useState(false);
+  const { midpoint, quaternion, length } = useSegment(sx, sy, sz, tx, ty, tz);
 
-    // Set color based on type (update, failure, etc.)
-    let color;
-    let textColor;
+  const { radius, radialSegments, labelSize, labelOutline, labelLift } = SCENE.link;
+  // Precedence: path highlight > decoration > hovered > idle. A blocked link
+  // the user has traced a path through must still read as on the path.
+  const style = !isHighlighted && !isDimmed ? LINK_DECORATIONS[decoration] : undefined;
+  let baseOpacity = isHighlighted ? SCENE.link.highlightOpacity : SCENE.link.idleOpacity;
+  if (style) baseOpacity = style.opacity;
 
-    if (type === 'failure') {
-        color = '#00008B'; // Lighter red for failure
-        textColor = '#000000'; // Darker red text for better contrast
+  useFrame(({ clock }) => {
+    const material = materialRef.current;
+    if (!material) return;
+    const wave = Math.sin(clock.getElapsedTime() * SCENE.link.pulseSpeed);
+    if (isHighlighted) {
+      material.opacity = baseOpacity;
+      material.emissiveIntensity = 0.6 + wave * 0.3;
+    } else if (style) {
+      // Decorated links hold still: the pulse is how an ordinary link says
+      // "nothing to see here", and a blocked or on-tree link is a statement.
+      material.opacity = baseOpacity;
+      material.emissiveIntensity = hovered ? 0.35 : 0.1;
     } else {
-        color = '00008B'; // Lighter blue for regular updates
-        textColor = '#000000'; // Darker blue text for better contrast
+      material.opacity = isDimmed ? 0.25 : baseOpacity + wave * SCENE.link.pulseDepth * 0.5;
+      material.emissiveIntensity = hovered ? 0.35 : 0.1;
     }
+  });
 
-    // Calculate pulse scale based on progress for a stronger pulsating effect
-    const pulseScale = 1 + Math.sin(progress * Math.PI * 4) * 0.3;
+  if (length <= SCENE.link.minLength) return null;
 
-    return (
-        <group>
-            <mesh
-                ref={animMeshRef}
-                position={[positionX, positionY, positionZ]}
-                scale={[pulseScale * 0.3, pulseScale * 0.3, pulseScale * 0.3]}
-            >
-                <sphereGeometry args={[1, 16, 16]} />
-                <meshStandardMaterial
-                    color={'#00008B'}
-                    emissive={'#00008B'}
-                    emissiveIntensity={0.5}
-                    transparent={true}
-                    opacity={0.5}
-                />
-            </mesh>
+  let color = COLORS.link;
+  if (isDimmed) color = COLORS.linkDown;
+  else if (isHighlighted) color = COLORS.linkHighlighted;
+  else if (style) color = COLORS[style.colorKey];
+  else if (hovered) color = COLORS.linkHovered;
 
-            {/* Add DV text to the animation ball */}
-            <Text
-                position={[positionX, positionY, positionZ]}
-                fontSize={0.3}
-                color={textColor}
-                anchorX="center"
-                anchorY="middle"
-                fontWeight="bold"
-                outlineWidth={0.02}
-                outlineColor="#FFFFFF"
-            >
-                DV
-            </Text>
-        </group>
-    );
+  return (
+    <group>
+      <mesh
+        position={midpoint}
+        quaternion={quaternion}
+        onPointerOver={(event) => {
+          event.stopPropagation();
+          setHovered(true);
+        }}
+        onPointerOut={() => setHovered(false)}
+      >
+        <cylinderGeometry args={[radius, radius, length, radialSegments]} />
+        <meshStandardMaterial
+          ref={materialRef}
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.1}
+          transparent
+          opacity={baseOpacity}
+        />
+      </mesh>
+
+      <Billboard position={[midpoint.x, midpoint.y + labelLift, midpoint.z]}>
+        <Text
+          fontSize={labelSize}
+          color={isHighlighted ? COLORS.linkHighlighted : COLORS.label}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={labelOutline}
+          outlineColor={COLORS.labelOutline}
+        >
+          {String(cost)}
+        </Text>
+      </Billboard>
+    </group>
+  );
 }
 
-function Grid() {
-    return (
-        <gridHelper args={[50, 50, 0x888888, 0x444444]} />
-    );
+/* ------------------------------------------------------------------ *
+ * Update packet
+ * ------------------------------------------------------------------ */
+
+function Packet({ sx, sy, sz, tx, ty, tz, kind, label, startedAt, duration }) {
+  const groupRef = useRef();
+  const { start, end } = useSegment(sx, sy, sz, tx, ty, tz);
+
+  // Colour and caption come from the message's own `kind`, so a DUAL query and
+  // its reply are told apart without the scene knowing DUAL exists.
+  const style = messageStyle(kind);
+  const color = COLORS[style.colorKey];
+  const caption = label || style.label;
+
+  useFrame(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const elapsed = performance.now() - startedAt;
+    const progress = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
+
+    group.position.lerpVectors(start, end, progress);
+    const pulse =
+      1 + Math.sin(progress * Math.PI * SCENE.packet.pulseCycles) * SCENE.packet.pulseDepth;
+    group.scale.setScalar(pulse);
+    // `startedAt` may be in the future: timer mode spaces a step's messages out
+    // in proportion to the simulated moments they were sent, and a packet must
+    // not sit visibly on its source router waiting for its turn.
+    group.visible = elapsed >= 0 && progress < 1;
+  });
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <sphereGeometry args={[SCENE.packet.radius, SCENE.packet.segments, SCENE.packet.segments]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.6}
+          transparent
+          opacity={0.65}
+        />
+      </mesh>
+      <Billboard>
+        <Text
+          fontSize={SCENE.packet.labelSize}
+          color={COLORS.labelOutline}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={SCENE.packet.labelOutline}
+          outlineColor={color}
+        >
+          {caption}
+        </Text>
+      </Billboard>
+    </group>
+  );
 }
+
+/* ------------------------------------------------------------------ *
+ * Path pulse
+ * ------------------------------------------------------------------ */
+
+function PathPulse({ path, routers }) {
+  const meshRef = useRef();
+
+  // Skip any hop whose router has since been deleted rather than crashing.
+  const points = useMemo(
+    () =>
+      path
+        .map((id) => routers[id])
+        .filter(Boolean)
+        .map((router) => new THREE.Vector3(router.x, router.y, router.z)),
+    [path, routers]
+  );
+
+  const segments = useMemo(() => {
+    const list = [];
+    let total = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      const length = points[i].distanceTo(points[i - 1]);
+      list.push({ from: points[i - 1], to: points[i], length, offset: total });
+      total += length;
+    }
+    return { list, total };
+  }, [points]);
+
+  useFrame(({ clock }) => {
+    const mesh = meshRef.current;
+    if (!mesh || segments.total <= 0) return;
+
+    const progress = (clock.getElapsedTime() % SCENE.pathPulse.loopSeconds) /
+      SCENE.pathPulse.loopSeconds;
+    const target = progress * segments.total;
+
+    const segment =
+      segments.list.find((item) => target <= item.offset + item.length) ||
+      segments.list[segments.list.length - 1];
+    const local = segment.length > 0 ? (target - segment.offset) / segment.length : 0;
+
+    mesh.position.lerpVectors(segment.from, segment.to, Math.min(1, Math.max(0, local)));
+    mesh.scale.setScalar(
+      1 + Math.sin(progress * Math.PI * SCENE.pathPulse.pulseCycles) * SCENE.pathPulse.pulseDepth
+    );
+  });
+
+  if (points.length < 2) return null;
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry
+        args={[SCENE.pathPulse.radius, SCENE.pathPulse.segments, SCENE.pathPulse.segments]}
+      />
+      <meshStandardMaterial
+        color={COLORS.pathPulse}
+        emissive={COLORS.pathPulse}
+        emissiveIntensity={1.5}
+        transparent
+        opacity={0.9}
+      />
+    </mesh>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Scene furniture
+ * ------------------------------------------------------------------ */
+
+/** A grid that grows to cover whatever the topology needs. */
+function AdaptiveGrid({ bounds }) {
+  const { cellSize, minExtent, maxExtent, padding } = SCENE.grid;
+  const reach = Math.max(
+    Math.abs(bounds.min.x),
+    Math.abs(bounds.max.x),
+    Math.abs(bounds.min.z),
+    Math.abs(bounds.max.z)
+  );
+  const extent = Math.min(
+    maxExtent,
+    Math.max(minExtent, Math.ceil((reach * 2 + padding) / cellSize) * cellSize)
+  );
+  return (
+    <gridHelper
+      args={[extent, Math.round(extent / cellSize), COLORS.gridMajor, COLORS.gridMinor]}
+      position={[0, bounds.min.y - 1, 0]}
+    />
+  );
+}
+
+/** Frames the whole topology on first paint and whenever `fitSignal` changes. */
+function FitView({ bounds, fitSignal }) {
+  const { camera, controls, size } = useThree();
+  const lastSignal = useRef(fitSignal);
+  const hasFitted = useRef(false);
+
+  useFrame(() => {
+    const requested = fitSignal !== lastSignal.current;
+    // Wait for a real canvas size: at mount the layout has not settled yet, so
+    // fitting on frame one would frame against the wrong viewport.
+    const firstRun = !hasFitted.current && size.height > 0 && bounds.hasContent;
+    if (!requested && !firstRun) return;
+
+    lastSignal.current = fitSignal;
+    if (!controls || !bounds.hasContent) return;
+    hasFitted.current = true;
+
+    const center = new THREE.Vector3()
+      .addVectors(bounds.min, bounds.max)
+      .multiplyScalar(0.5);
+    const radius = Math.max(
+      SCENE.fit.minDistance / 2,
+      bounds.max.distanceTo(bounds.min) / 2
+    );
+    const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+    const distance = Math.max(
+      SCENE.fit.minDistance,
+      (radius * SCENE.fit.padding) / Math.sin(fovRadians / 2)
+    );
+
+    const direction = new THREE.Vector3()
+      .subVectors(camera.position, controls.target)
+      .normalize();
+    if (direction.lengthSq() < 1e-6) direction.set(1, 1, 1).normalize();
+
+    camera.position.copy(center).addScaledVector(direction, distance);
+    controls.target.copy(center);
+    controls.update();
+  });
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Root
+ * ------------------------------------------------------------------ */
 
 function Network3D({
-    routers,
-    links,
-    selectedRouter,
-    onRouterClick,
-    routingTable,
-    animations,
-    iteration,
-    highlightedPath
+  routers,
+  links,
+  selectedRouter,
+  onRouterClick,
+  routingTable,
+  routingColumns,
+  routingRowLabel,
+  routingCorrectness,
+  decorations,
+  routeTreeEdges,
+  packets,
+  highlightedPath,
+  downRouters,
+  infinityCost,
+  fitSignal,
 }) {
-    // References to objects
-    const controlsRef = useRef();
-
-    // Animation state
-    useFrame(() => {
-        if (controlsRef.current) {
-            controlsRef.current.update();
-        }
+  const bounds = useMemo(() => {
+    const entries = Object.values(routers);
+    if (entries.length === 0) {
+      return {
+        hasContent: false,
+        min: new THREE.Vector3(-5, 0, -5),
+        max: new THREE.Vector3(5, 0, 5),
+      };
+    }
+    const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    entries.forEach((router) => {
+      min.min(new THREE.Vector3(router.x, router.y, router.z));
+      max.max(new THREE.Vector3(router.x, router.y, router.z));
     });
+    return { hasContent: true, min, max };
+  }, [routers]);
 
-    // Create router objects
-    const routerObjects = Object.entries(routers).map(([id, router]) => (
+  // Which links lie on the highlighted path, as an order-independent lookup.
+  const pathEdges = useMemo(() => {
+    const edges = new Set();
+    for (let i = 0; i + 1 < (highlightedPath?.length || 0); i += 1) {
+      edges.add(edgeKey(highlightedPath[i], highlightedPath[i + 1]));
+    }
+    return edges;
+  }, [highlightedPath]);
+
+  /**
+   * Link decorations, with the route-tree overlay folded in underneath.
+   *
+   * The overlay is a view toggle and the protocol's own decorations are the
+   * truth, so a link the protocol calls `blocked` stays blocked even when the
+   * selected router's table happens to route through it.
+   */
+  const linkDecorations = useMemo(() => {
+    const merged = {};
+    (routeTreeEdges || new Set()).forEach((key) => {
+      merged[key] = 'tree';
+    });
+    return { ...merged, ...(decorations?.links || {}) };
+  }, [decorations, routeTreeEdges]);
+
+  const routerDecorations = decorations?.routers || {};
+  const isDown = (id) => downRouters?.has(id);
+
+  return (
+    <>
+      <ambientLight intensity={SCENE.lights.ambientIntensity} />
+      <directionalLight
+        position={SCENE.lights.keyPosition}
+        intensity={SCENE.lights.keyIntensity}
+      />
+      <directionalLight
+        position={SCENE.lights.fillPosition}
+        intensity={SCENE.lights.fillIntensity}
+      />
+
+      <AdaptiveGrid bounds={bounds} />
+      <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
+      <FitView bounds={bounds} fitSignal={fitSignal} />
+
+      {Object.entries(routers).map(([id, router]) => (
         <Router
-            key={id}
-            position={[router.x, router.y, router.z]}
-            id={id}
-            isSelected={id === selectedRouter}
-            onClick={(e) => {
-                e.stopPropagation();
-                onRouterClick(id);
-            }}
-            routingTable={id === selectedRouter ? routingTable : null}
-            allRouters={routers}
+          key={id}
+          id={id}
+          position={[router.x, router.y, router.z]}
+          isSelected={id === selectedRouter}
+          isDown={isDown(id)}
+          decoration={routerDecorations[id]}
+          onSelect={onRouterClick}
+          table={id === selectedRouter ? routingTable : null}
+          columns={routingColumns}
+          rowLabel={routingRowLabel}
+          correctness={id === selectedRouter ? routingCorrectness : null}
+          infinityCost={infinityCost}
+          peers={routers}
         />
-    ));
+      ))}
 
-    // Create link objects
-    const linkObjects = links.map((link, index) => {
-        const sourceRouter = routers[link.source];
-        const targetRouter = routers[link.destination];
-
-        if (!sourceRouter || !targetRouter) return null;
-
-        // Check if this link is part of the highlighted path
-        let isInPath = false;
-        if (highlightedPath && highlightedPath.length > 1) {
-            // Check each consecutive pair of routers in the path
-            for (let i = 0; i < highlightedPath.length - 1; i++) {
-                const pathSource = highlightedPath[i];
-                const pathTarget = highlightedPath[i + 1];
-
-                // Check if this link connects the current path segment (in either direction)
-                if ((link.source === pathSource && link.destination === pathTarget) ||
-                    (link.source === pathTarget && link.destination === pathSource)) {
-                    isInPath = true;
-                    break;
-                }
-            }
-        }
-
+      {links.map((link) => {
+        const source = routers[link.source];
+        const target = routers[link.destination];
+        if (!source || !target) return null;
         return (
-            <Link
-                key={`${link.source}-${link.destination}`}
-                source={[sourceRouter.x, sourceRouter.y, sourceRouter.z]}
-                target={[targetRouter.x, targetRouter.y, targetRouter.z]}
-                cost={link.cost}
-                isPathHighlighted={isInPath}
-            />
+          <Link
+            key={`${link.source} ${link.destination}`}
+            sx={source.x}
+            sy={source.y}
+            sz={source.z}
+            tx={target.x}
+            ty={target.y}
+            tz={target.z}
+            cost={link.cost}
+            decoration={linkDecorations[edgeKey(link.source, link.destination)]}
+            isHighlighted={pathEdges.has(edgeKey(link.source, link.destination))}
+            isDimmed={isDown(link.source) || isDown(link.destination)}
+          />
         );
-    });
+      })}
 
-    // Create animation objects
-    const animationObjects = animations.map((anim, index) => {
-        const sourceRouter = routers[anim.source];
-        const targetRouter = routers[anim.target];
-
-        if (!sourceRouter || !targetRouter) return null;
-
+      {packets.map((packet) => {
+        const source = routers[packet.from];
+        const target = routers[packet.to];
+        if (!source || !target) return null;
         return (
-            <Animation
-                key={`${anim.source}-${anim.target}-${index}`}
-                source={[sourceRouter.x, sourceRouter.y, sourceRouter.z]}
-                target={[targetRouter.x, targetRouter.y, targetRouter.z]}
-                progress={anim.progress}
-                type={anim.type}
-            />
+          <Packet
+            key={packet.key}
+            sx={source.x}
+            sy={source.y}
+            sz={source.z}
+            tx={target.x}
+            ty={target.y}
+            tz={target.z}
+            kind={packet.kind}
+            label={packet.label}
+            startedAt={packet.startedAt}
+            duration={packet.duration}
+          />
         );
-    });
+      })}
 
-    // Path animation (only shown when a path is highlighted)
-    const pathAnimation = highlightedPath && highlightedPath.length > 1 ? (
-        <PathAnimation path={highlightedPath} routers={routers} />
-    ) : null;
-
-    return (
-        <>
-            <ambientLight intensity={0.5} />
-            <pointLight position={[10, 10, 10]} intensity={0.8} />
-            <Grid />
-            <OrbitControls ref={controlsRef} />
-            {routerObjects}
-            {linkObjects}
-            {animationObjects}
-            {pathAnimation}
-
-            {/* Add iteration overlay */}
-            <Html position={[0, 10, 0]}>
-                <div className="iteration-overlay">
-                    <span>Iteration: {iteration}</span>
-                </div>
-            </Html>
-        </>
-    );
+      {highlightedPath?.length > 1 && (
+        <PathPulse path={highlightedPath} routers={routers} />
+      )}
+    </>
+  );
 }
 
-// Add this new component for path animation
-function PathAnimation({ path, routers }) {
-    const [progress, setProgress] = useState(0);
-    const animMeshRef = useRef();
-
-    // Get positions of all routers in the path
-    const positions = path.map(routerId => {
-        const router = routers[routerId];
-        return [router.x, router.y, router.z];
-    });
-
-    // Use useFrame to animate the progress
-    useFrame(({ clock }) => {
-        // Loop animation every 3 seconds
-        const loopTime = 3;
-        const time = clock.getElapsedTime() % loopTime;
-        setProgress(time / loopTime);
-    });
-
-    // If less than 2 positions, don't render anything
-    if (positions.length < 2) return null;
-
-    // Calculate the total path length
-    const totalLength = positions.reduce((total, pos, i) => {
-        if (i === 0) return 0;
-        const prev = positions[i - 1];
-        const dx = pos[0] - prev[0];
-        const dy = pos[1] - prev[1];
-        const dz = pos[2] - prev[2];
-        return total + Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }, 0);
-
-    // Calculate current position along the path
-    const getCurrentPosition = () => {
-        // If there's only one position, return it
-        if (positions.length === 1) return positions[0];
-
-        const targetDistance = progress * totalLength;
-        let currentDistance = 0;
-
-        // Find the current segment
-        for (let i = 1; i < positions.length; i++) {
-            const prev = positions[i - 1];
-            const curr = positions[i];
-
-            const dx = curr[0] - prev[0];
-            const dy = curr[1] - prev[1];
-            const dz = curr[2] - prev[2];
-
-            const segmentLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-            if (currentDistance + segmentLength >= targetDistance) {
-                // We found our segment
-                const segmentProgress = (targetDistance - currentDistance) / segmentLength;
-
-                // Interpolate between points
-                return [
-                    prev[0] + dx * segmentProgress,
-                    prev[1] + dy * segmentProgress,
-                    prev[2] + dz * segmentProgress
-                ];
-            }
-
-            currentDistance += segmentLength;
-        }
-
-        // If we're at the end, return the last position
-        return positions[positions.length - 1];
-    };
-
-    const currentPos = getCurrentPosition();
-
-    // Calculate pulse scale for a pulsating effect
-    const pulseScale = 1 + Math.sin(progress * Math.PI * 6) * 0.2;
-
-    return (
-        <mesh
-            ref={animMeshRef}
-            position={currentPos}
-            scale={[pulseScale * 0.2, pulseScale * 0.2, pulseScale * 0.2]}
-        >
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshStandardMaterial
-                color="#00AAFF"
-                emissive="#00AAFF"
-                emissiveIntensity={1.5}
-                transparent={true}
-                opacity={0.9}
-            />
-        </mesh>
-    );
-}
-
-export default Network3D; 
+export default Network3D;
