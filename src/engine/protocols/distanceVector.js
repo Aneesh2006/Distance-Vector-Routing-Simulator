@@ -1042,7 +1042,7 @@ export const distanceVector = {
         'Turn triggered updates off and break a link: recovery goes from seconds to the ' +
           'best part of a minute, because everyone now waits for their next scheduled ' +
           'broadcast to hear about it.',
-        'Load "Async loop trap", turn triggered updates off and break 1 ↔ 7. The tables ' +
+        'Load "Async loop trap", turn triggered updates off and break 1 ↔ 5. The tables ' +
           'can loop even with split horizon and poisoned reverse on — stale news from one ' +
           'direction outruns the poison from the other. Try a few seeds: some runs are ' +
           'clean. That "sometimes" is exactly what DUAL exists to remove.',

@@ -136,6 +136,35 @@ const SHARED_SECTIONS = [
         'starts where you started rather than where you finished.',
     ],
   },
+  {
+    heading: 'Writing your own protocol',
+    items: [
+      '"Write a custom protocol…", under the protocol dropdown, opens an editor. ' +
+        'A plugin is a plain object — an id, a name, a table of settings, some ' +
+        'columns, and three functions — and once it validates it joins the ' +
+        'dropdown, the comparison table and everything else, exactly like a ' +
+        'built-in one. Start from the minimal skeleton or the worked example.',
+      'Or start from one of the five that ship with the app: the same menu opens ' +
+        'any of them, and what opens is the source the simulator is actually ' +
+        'running rather than a simplified retelling of it. Only the id and the ' +
+        'name are changed, at the very bottom, so your copy runs beside the ' +
+        'original instead of replacing it — which means you can put the two in ' +
+        'the comparison table together and measure what your change cost.',
+      'Validate & Activate compiles the code, checks it against the contract, and ' +
+        'then actually runs it on a hidden four-router network: it has to converge, ' +
+        'survive a broken link, and be honest about whether anything changed. ' +
+        'Errors block activation and name the field or the rule; warnings do not, ' +
+        'because a protocol that gets the wrong answer is a perfectly good thing to ' +
+        'build here.',
+      'The code runs in your browser tab with full access to the page, like ' +
+        'anything typed into the developer console — so only paste code you trust. ' +
+        'It is never uploaded and never written to disk.',
+      'It lives in this tab and nowhere else. A shareable link carries a protocol ' +
+        'id rather than any code, so a link made while your own protocol is ' +
+        'selected opens on the default one for whoever receives it — and closing ' +
+        'the tab is what removes it.',
+    ],
+  },
 ];
 
 const CAMERA_SECTION = {

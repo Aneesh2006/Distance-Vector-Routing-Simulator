@@ -26,6 +26,17 @@ import HelpModal from './HelpModal';
 import ComparisonModal from './ComparisonModal';
 import Modal from './Modal';
 import { PROTOCOLS, Simulation, compareIds } from './DvrAlgorithm';
+import {
+  DEFAULT_PROTOCOL_ID,
+  customProtocolList,
+  isBuiltinProtocolId,
+  unregisterCustomProtocol,
+} from './engine/protocols';
+import {
+  clearStoredProtocol,
+  restoreCustomProtocol,
+  writeWasActive,
+} from './customProtocolSession';
 import { decodeScenario, scenarioFromUrl, scenarioUrl } from './engine/scenario';
 import { SCENE, SIM, maxLinkCostFor } from './config';
 import { DEFAULT_PRESET, PRESETS, PRESET_GROUPS, autoPosition } from './presets';
@@ -117,6 +128,17 @@ function buildFromScenario(scenario) {
   return { network, positions };
 }
 
+/**
+ * The one lazily loaded module in the app.
+ *
+ * The editor brings a syntax-highlighting engine with it — about as much
+ * JavaScript again as the entire rest of the app — and most people never open
+ * it. Split out, it is a chunk that is fetched the first time somebody clicks
+ * "Write a custom protocol…", and the initial load is exactly what it was
+ * before the feature existed.
+ */
+const CustomProtocolModal = React.lazy(() => import('./CustomProtocolModal'));
+
 const linkKey = (source, destination) => [source, destination].sort(compareIds).join('|');
 
 /** Status-line tones. At module scope because the opening world sets one too. */
@@ -194,6 +216,20 @@ function openingWorld() {
 }
 
 function App() {
+  /**
+   * Whatever this tab was running before the reload, brought back *before* the
+   * world is built.
+   *
+   * Order matters twice: the dropdown has the protocol from the very first
+   * render rather than popping in a moment later, and a shared link that names
+   * it — one the user made in this tab — can still resolve it, instead of
+   * silently falling back to the default.
+   */
+  const customRef = useRef(null);
+  if (customRef.current === null) {
+    customRef.current = restoreCustomProtocol();
+  }
+
   const worldRef = useRef(null);
   if (worldRef.current === null) {
     worldRef.current = openingWorld();
@@ -208,11 +244,37 @@ function App() {
    * schemas differ per protocol, so one shared object would not do.
    */
   const optionsByProtocolRef = useRef(worldRef.current.optionsByProtocol);
+  /**
+   * The custom protocol's source, in memory.
+   *
+   * A ref rather than state on purpose: the editor writes on every keystroke,
+   * and routing that through `App` would re-render the whole scene per
+   * character. `sessionStorage` is the copy that survives a reload; this one is
+   * only so reopening the dialog is instant, and so a private window that
+   * refuses storage still keeps the code for as long as the tab is open.
+   */
+  const customSourceRef = useRef(customRef.current.source);
 
   const [positions, setPositions] = useState(() => worldRef.current.positions);
   const [snapshot, setSnapshot] = useState(() => worldRef.current.network.getSnapshot());
 
-  const [status, setStatus] = useState(() => worldRef.current.status);
+  /**
+   * The registry cannot be observed — it is a `Map` — so the list React renders
+   * from lives here, and every registration goes through a setter that refreshes
+   * it. `allProtocols()` remains the truth for everything that resolves an id.
+   */
+  const [customProtocols, setCustomProtocols] = useState(() => customProtocolList());
+  const [customActiveId, setCustomActiveId] = useState(customRef.current.activeId);
+  const [showCustomProtocol, setShowCustomProtocol] = useState(false);
+
+  const [status, setStatus] = useState(() => {
+    const opening = worldRef.current.status;
+    if (!customRef.current.error) return opening;
+    return warn(
+      `${opening.text} The custom protocol from this tab could not be restored: ` +
+        `${customRef.current.error} Its code is still in the editor.`
+    );
+  });
 
   // Router form
   const [routerX, setRouterX] = useState('0');
@@ -452,9 +514,14 @@ function App() {
    * The topology, the router positions and the ground truth all survive; only
    * what the routers had learned is thrown away. That is what makes two
    * protocols comparable on identical input.
+   *
+   * `force` is for the one case where the id has not changed but the protocol
+   * behind it has: re-activating an edited custom protocol replaces the
+   * registration under the same id, and the state built by the previous version
+   * has to go with it.
    */
-  function selectProtocol(protocolId) {
-    if (protocolId === protocol.id) return;
+  function selectProtocol(protocolId, { force = false } = {}) {
+    if (protocolId === protocol.id && !force) return;
     setPlaying(false);
     network.setProtocol(protocolId, optionsByProtocolRef.current[protocolId]);
     setPackets([]);
@@ -467,6 +534,75 @@ function App() {
           'The topology is unchanged; the round counter starts again.'
       )
     );
+  }
+
+  /* ---------------- custom protocols ---------------- */
+
+  /**
+   * A protocol the user just wrote has passed compile, contract check and smoke
+   * run before it reaches here — `attemptActivation` registered it, and this is
+   * only the app catching up with the registry.
+   */
+  function activateCustomProtocol(plugin) {
+    /**
+     * The editor holds one protocol, so the app holds one.
+     *
+     * Activating under a *new* id — loading a different template, or renaming
+     * the one that was there — retires the previous registration. Leaving it
+     * would strand it in the dropdown with no source behind it, nothing left to
+     * edit it with, and a Remove button that now names something else; a reload
+     * would then drop it silently, because only one source is ever stored.
+     */
+    const retired = customActiveId && customActiveId !== plugin.id ? customActiveId : null;
+    if (retired) {
+      unregisterCustomProtocol(retired);
+      delete optionsByProtocolRef.current[retired];
+    }
+    // Re-activating an edited plugin can change the option *schema*, so values
+    // remembered under this id belong to a protocol that no longer exists.
+    delete optionsByProtocolRef.current[plugin.id];
+    setCustomProtocols(customProtocolList());
+    setCustomActiveId(plugin.id);
+    writeWasActive(true);
+    selectProtocol(plugin.id, { force: true });
+    setStatus(
+      good(
+        `"${plugin.name}" is running. It is in the protocol dropdown and in the ` +
+          'comparison table, exactly like a built-in one.' +
+          (retired ? ` "${retired}" made way for it — the editor holds one at a time.` : '')
+      )
+    );
+  }
+
+  /**
+   * Take the registration away, keeping the code.
+   *
+   * Switching away first is not tidiness: `setProtocol` resolves the id through
+   * the registry, so unregistering while it is selected would leave the
+   * simulation holding a protocol nothing could look up again.
+   */
+  function removeCustomProtocol() {
+    const id = customActiveId;
+    if (!id) return;
+    if (protocol.id === id) selectProtocol(DEFAULT_PROTOCOL_ID, { force: true });
+    unregisterCustomProtocol(id);
+    delete optionsByProtocolRef.current[id];
+    setCustomProtocols(customProtocolList());
+    setCustomActiveId(null);
+    writeWasActive(false);
+    setStatus(info(`Custom protocol "${id}" removed. Its code is still in the editor.`));
+  }
+
+  /** The explicit wipe: registration, stored source and stored flag all go. */
+  function clearCustomProtocol() {
+    const id = customActiveId;
+    if (id && protocol.id === id) selectProtocol(DEFAULT_PROTOCOL_ID, { force: true });
+    if (id) delete optionsByProtocolRef.current[id];
+    clearStoredProtocol(id);
+    customSourceRef.current = '';
+    setCustomProtocols(customProtocolList());
+    setCustomActiveId(null);
+    setStatus(info('Custom protocol cleared — the code and the registration are both gone.'));
   }
 
   /* ---------------- algorithm ---------------- */
@@ -621,7 +757,7 @@ function App() {
       info(
         mode === 'timers'
           ? 'Timer mode: the lockstep is gone. Every router now runs on its own clock, ' +
-              'with this protocol‘s real timers — press Play, or step to the next event.'
+              "with this protocol's real timers — press Play, or step to the next event."
           : 'Round mode: one round, every router speaks, every router listens.'
       )
     );
@@ -664,18 +800,32 @@ function App() {
     const url = scenarioUrl(network.getSnapshot(), positions, window.location.href);
     window.history.replaceState(null, '', url);
 
+    // A link carries a protocol *id*, never code — which is the whole reason a
+    // custom protocol is safe to run at all. Whoever opens this one will not
+    // have the plugin, and `scenario.js` falls back to the default rather than
+    // refusing the link, so say so before they wonder why it looks different.
+    const custom = !isBuiltinProtocolId(protocol.id);
+    const caveat = custom
+      ? ' Your custom protocol is not in it — code never travels in a link — so it ' +
+        'opens on the default protocol for anyone else.'
+      : '';
+
     try {
       await navigator.clipboard.writeText(url);
       setStatus(
-        good(
+        (custom ? warn : good)(
           'Link copied. It carries the topology, the protocol, every setting and ' +
-            'the seed — but not how far the run has got, so it always starts fresh.'
+            `the seed — but not how far the run has got, so it always starts fresh.${caveat}`
         )
       );
     } catch (error) {
       // Refused, or no clipboard at all on this origin. The address bar is the
       // scenario now, which is the thing that actually had to happen.
-      setStatus(info('The address bar now holds this scenario — copy it from there.'));
+      setStatus(
+        (custom ? warn : info)(
+          `The address bar now holds this scenario — copy it from there.${caveat}`
+        )
+      );
     }
   }
 
@@ -823,6 +973,31 @@ function App() {
         />
       )}
 
+      {/* Mounted only while open, and fetched only when first opened. The draft
+          it holds lives in sessionStorage rather than in this component, so
+          neither unmounting it nor reloading the page can lose it. */}
+      {showCustomProtocol && (
+        <React.Suspense
+          fallback={
+            <Modal onClose={() => setShowCustomProtocol(false)} label="Loading the editor">
+              <p>Loading the editor…</p>
+            </Modal>
+          }
+        >
+          <CustomProtocolModal
+            onClose={() => setShowCustomProtocol(false)}
+            initialSource={customSourceRef.current}
+            activeId={customActiveId}
+            onSourceChange={(text) => {
+              customSourceRef.current = text;
+            }}
+            onActivate={activateCustomProtocol}
+            onRemove={removeCustomProtocol}
+            onClear={clearCustomProtocol}
+          />
+        </React.Suspense>
+      )}
+
       {showConvergence && (
         <Modal
           onClose={() => setShowConvergence(false)}
@@ -865,8 +1040,28 @@ function App() {
                     {entry.name}
                   </option>
                 ))}
+                {/* Grouped rather than appended: a protocol somebody wrote ten
+                    minutes ago and one that ships with the app are not the same
+                    kind of thing, and the dropdown should not pretend they are. */}
+                {customProtocols.length > 0 && (
+                  <optgroup label="Custom (this tab only)">
+                    {customProtocols.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setShowCustomProtocol(true)}
+              title="Write a routing protocol and run it in this tab"
+            >
+              {customActiveId ? `Custom protocol: ${customActiveId}` : 'Write a custom protocol…'}
+            </button>
             <div className="form-group">
               <label htmlFor="preset">Preset</label>
               <select

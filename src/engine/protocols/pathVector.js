@@ -610,7 +610,7 @@ export const pathVector = {
           'second tier appears. Load "Two ASes, one peering" for a topology built ' +
           'for it.',
         'Sessions then come in two kinds, and the scene marks them: a purple link ' +
-          'is **eBGP**, between ASes, and every other link is **iBGP**, inside ' +
+          'is eBGP, between ASes, and every other link is iBGP, inside ' +
           'one. The AS Path grows on an eBGP session and nowhere else, which is ' +
           'the whole point — a path is a list of ASes crossed, so crossing none ' +
           'adds nothing. A destination in your own AS shows an empty path.',
@@ -623,7 +623,7 @@ export const pathVector = {
           'route and refuses to pass it on, so the third router never hears about ' +
           'it at all. That is not a bug — it is why iBGP has to be a full mesh ' +
           'between every pair of routers in the AS, which is n²/2 sessions.',
-        'The escape is the **route reflector**: tick it on the middle router and ' +
+        'The escape is the route reflector: tick it on the middle router and ' +
           'it starts relaying, marked ◈ in the list, and the third router learns ' +
           'the route. Real reflectors carry a CLUSTER_LIST and an ORIGINATOR_ID ' +
           'to detect the loops that reflecting reintroduces; those are not ' +

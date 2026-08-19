@@ -905,7 +905,7 @@ export const linkState = {
     {
       heading: 'Distance vector vs link state',
       items: [
-        'What a router knows: its neighbours’ conclusions — versus everyone’s raw facts.',
+        'What a router knows: its neighbours\' conclusions — versus everyone\'s raw facts.',
         'What it sends: one entry per destination, to neighbours only — versus ' +
           'its own adjacencies, flooded network-wide.',
         'How the table is built: Bellman-Ford, distributed over rounds — versus ' +
@@ -957,14 +957,14 @@ export const linkState = {
           'never holds the map of area 1 — it does not have the topology, and no ' +
           'amount of Dijkstra will give it one. The boundary is visible in the ' +
           'scene as a teal link, and the routers either side of it are marked ◆.',
-        'What crosses the boundary instead is a **summary LSA**: an area border ' +
+        'What crosses the boundary instead is a summary LSA: an area border ' +
           'router, which is in both areas and holds both maps, injects into each ' +
           'one a plain "I can reach 7, for 4" about every destination in the ' +
           'other. Open the LSDB tab on a router inside an area and the rows ' +
           'beginning S are those.',
-        'That is the whole lesson, and it is worth saying baldly: **inside an ' +
+        'That is the whole lesson, and it is worth saying baldly: inside an ' +
           'area OSPF is a link-state protocol, and between areas it is distance ' +
-          'vector.** A summary is a distance you cannot check. Everything that ' +
+          'vector. A summary is a distance you cannot check. Everything that ' +
           'follows from that follows here — the backbone has to be contiguous ' +
           'for the distances to compose, inter-area routes cannot be verified ' +
           'the way intra-area ones can, and the counters in Stats show inter-area ' +

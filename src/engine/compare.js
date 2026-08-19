@@ -28,7 +28,7 @@
  */
 
 import { SIM } from '../config';
-import { PROTOCOLS } from './protocols';
+import { allProtocols } from './protocols';
 import { Simulation } from './Simulation';
 
 /**
@@ -48,11 +48,14 @@ export const COMPARISON_VARIANTS = [
  * The rows to run, in display order: every registered protocol, each followed
  * immediately by its own variants so the pair can be read as a pair.
  *
- * Read from `PROTOCOLS` rather than listed here, so a protocol added in a later
- * stage appears in the comparison without anyone remembering to come back.
+ * Read from `allProtocols()` rather than listed here, so a protocol added in a
+ * later stage appears in the comparison without anyone remembering to come back
+ * — and so does one the user wrote in the editor five minutes ago, which is the
+ * most interesting row the table can have: their protocol next to the five it is
+ * an attempt at.
  */
 export function comparisonRows() {
-  return PROTOCOLS.flatMap((protocol) => [
+  return allProtocols().flatMap((protocol) => [
     { key: protocol.id, protocolId: protocol.id, label: protocol.name, note: null },
     ...COMPARISON_VARIANTS.filter((variant) => variant.protocolId === protocol.id).map(
       (variant) => ({

@@ -3,12 +3,14 @@
   "version": "2.0.0",
   "private": true,
   "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
     "@react-three/drei": "^10.0.6",
     "@react-three/fiber": "^9.1.2",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
+    "@uiw/react-codemirror": "^4.25.11",
     "gsap": "^3.12.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -20,7 +22,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "build:sources": "node scripts/generateBuiltinSources.cjs"
   },
   "eslintConfig": {
     "extends": [
